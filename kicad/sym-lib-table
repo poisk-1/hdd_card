@@ -1,0 +1,3 @@
+(sym_lib_table
+  (lib (name "poisk_card")(type "KiCad")(uri "${KIPRJMOD}/poisk_card.kicad_sym")(options "")(descr ""))
+)
