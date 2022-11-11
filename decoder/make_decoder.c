@@ -11,9 +11,8 @@ const size_t io_base = 0xe0000;
 const size_t io_data_size = 0x200;
 const size_t io_ctrl_size = 0x80;
 
-const size_t sel_io_bit = 7;
-const size_t sel_io_data_bit = 6;
-const size_t sel_io_ctrl_bit = 5;
+const size_t sel_io_bit = 0;
+const size_t sel_io_data_bit = 1;
 
 int main(int argc, char **argv) {
   if (argc != 2) {
@@ -38,17 +37,13 @@ int main(int argc, char **argv) {
 
   for (size_t i = 0; i < (1 << 20); i++) {
     size_t j = i >> (address_bits - rom_bits);
-    uint8_t flags = 0;
+    uint8_t flags = (1 << sel_io_bit) | (1 << sel_io_data_bit);
 
     if (i >= io_base && i < (io_base + io_data_size + io_ctrl_size)) {
-      flags |= (1 << sel_io_bit);
+      flags &= ~(1 << sel_io_bit);
     }
     if (i >= io_base && i < (io_base + io_data_size)) {
-      flags |= (1 << sel_io_data_bit);
-    }
-    if (i >= (io_base + io_data_size) &&
-        i < (io_base + io_data_size + io_ctrl_size)) {
-      flags |= (1 << sel_io_ctrl_bit);
+      flags &= ~(1 << sel_io_data_bit);
     }
 
     rom_buffer[j] = flags;

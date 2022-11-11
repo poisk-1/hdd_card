@@ -1,3 +1,4 @@
 (sym_lib_table
   (lib (name "poisk_card")(type "KiCad")(uri "${KIPRJMOD}/poisk_card.kicad_sym")(options "")(descr ""))
+  (lib (name "MCU_Microchip_PIC18")(type "Legacy")(uri "/home/peter/Downloads/MCU_Microchip_PIC18.lib")(options "")(descr ""))
 )
