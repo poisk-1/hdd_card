@@ -289,6 +289,26 @@
 #define ACK_IO_SetAnalogMode()      do { ANSELBbits.ANSELB3 = 1; } while(0)
 #define ACK_IO_SetDigitalMode()     do { ANSELBbits.ANSELB3 = 0; } while(0)
 
+// get/set ADDR_8 aliases
+#define ADDR_8_TRIS                 TRISBbits.TRISB4
+#define ADDR_8_LAT                  LATBbits.LATB4
+#define ADDR_8_PORT                 PORTBbits.RB4
+#define ADDR_8_WPU                  WPUBbits.WPUB4
+#define ADDR_8_OD                   ODCONBbits.ODCB4
+#define ADDR_8_ANS                  ANSELBbits.ANSELB4
+#define ADDR_8_SetHigh()            do { LATBbits.LATB4 = 1; } while(0)
+#define ADDR_8_SetLow()             do { LATBbits.LATB4 = 0; } while(0)
+#define ADDR_8_Toggle()             do { LATBbits.LATB4 = ~LATBbits.LATB4; } while(0)
+#define ADDR_8_GetValue()           PORTBbits.RB4
+#define ADDR_8_SetDigitalInput()    do { TRISBbits.TRISB4 = 1; } while(0)
+#define ADDR_8_SetDigitalOutput()   do { TRISBbits.TRISB4 = 0; } while(0)
+#define ADDR_8_SetPullup()          do { WPUBbits.WPUB4 = 1; } while(0)
+#define ADDR_8_ResetPullup()        do { WPUBbits.WPUB4 = 0; } while(0)
+#define ADDR_8_SetPushPull()        do { ODCONBbits.ODCB4 = 0; } while(0)
+#define ADDR_8_SetOpenDrain()       do { ODCONBbits.ODCB4 = 1; } while(0)
+#define ADDR_8_SetAnalogMode()      do { ANSELBbits.ANSELB4 = 1; } while(0)
+#define ADDR_8_SetDigitalMode()     do { ANSELBbits.ANSELB4 = 0; } while(0)
+
 // get/set RC0 procedures
 #define RC0_SetHigh()            do { LATCbits.LATC0 = 1; } while(0)
 #define RC0_SetLow()             do { LATCbits.LATC0 = 0; } while(0)
@@ -505,25 +525,25 @@
 #define IO_RD7_SetAnalogMode()      do { ANSELDbits.ANSELD7 = 1; } while(0)
 #define IO_RD7_SetDigitalMode()     do { ANSELDbits.ANSELD7 = 0; } while(0)
 
-// get/set IO_RE0 aliases
-#define IO_RE0_TRIS                 TRISEbits.TRISE0
-#define IO_RE0_LAT                  LATEbits.LATE0
-#define IO_RE0_PORT                 PORTEbits.RE0
-#define IO_RE0_WPU                  WPUEbits.WPUE0
-#define IO_RE0_OD                   ODCONEbits.ODCE0
-#define IO_RE0_ANS                  ANSELEbits.ANSELE0
-#define IO_RE0_SetHigh()            do { LATEbits.LATE0 = 1; } while(0)
-#define IO_RE0_SetLow()             do { LATEbits.LATE0 = 0; } while(0)
-#define IO_RE0_Toggle()             do { LATEbits.LATE0 = ~LATEbits.LATE0; } while(0)
-#define IO_RE0_GetValue()           PORTEbits.RE0
-#define IO_RE0_SetDigitalInput()    do { TRISEbits.TRISE0 = 1; } while(0)
-#define IO_RE0_SetDigitalOutput()   do { TRISEbits.TRISE0 = 0; } while(0)
-#define IO_RE0_SetPullup()          do { WPUEbits.WPUE0 = 1; } while(0)
-#define IO_RE0_ResetPullup()        do { WPUEbits.WPUE0 = 0; } while(0)
-#define IO_RE0_SetPushPull()        do { ODCONEbits.ODCE0 = 0; } while(0)
-#define IO_RE0_SetOpenDrain()       do { ODCONEbits.ODCE0 = 1; } while(0)
-#define IO_RE0_SetAnalogMode()      do { ANSELEbits.ANSELE0 = 1; } while(0)
-#define IO_RE0_SetDigitalMode()     do { ANSELEbits.ANSELE0 = 0; } while(0)
+// get/set LED aliases
+#define LED_TRIS                 TRISEbits.TRISE0
+#define LED_LAT                  LATEbits.LATE0
+#define LED_PORT                 PORTEbits.RE0
+#define LED_WPU                  WPUEbits.WPUE0
+#define LED_OD                   ODCONEbits.ODCE0
+#define LED_ANS                  ANSELEbits.ANSELE0
+#define LED_SetHigh()            do { LATEbits.LATE0 = 1; } while(0)
+#define LED_SetLow()             do { LATEbits.LATE0 = 0; } while(0)
+#define LED_Toggle()             do { LATEbits.LATE0 = ~LATEbits.LATE0; } while(0)
+#define LED_GetValue()           PORTEbits.RE0
+#define LED_SetDigitalInput()    do { TRISEbits.TRISE0 = 1; } while(0)
+#define LED_SetDigitalOutput()   do { TRISEbits.TRISE0 = 0; } while(0)
+#define LED_SetPullup()          do { WPUEbits.WPUE0 = 1; } while(0)
+#define LED_ResetPullup()        do { WPUEbits.WPUE0 = 0; } while(0)
+#define LED_SetPushPull()        do { ODCONEbits.ODCE0 = 0; } while(0)
+#define LED_SetOpenDrain()       do { ODCONEbits.ODCE0 = 1; } while(0)
+#define LED_SetAnalogMode()      do { ANSELEbits.ANSELE0 = 1; } while(0)
+#define LED_SetDigitalMode()     do { ANSELEbits.ANSELE0 = 0; } while(0)
 
 /**
    @Param

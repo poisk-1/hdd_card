@@ -49,7 +49,7 @@ static uint8_t ctrl_buffer[0x80];
 static uint8_t data_buffer[0x200];
 
 void handle_read(void) {
-    size_t address = (((size_t) PORTE & 0x1) << 8) | (size_t) PORTD;
+    size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
 
     PORTA = SEL_IO_DATA_GetValue() ? ctrl_buffer[address] : data_buffer[address];
 
@@ -58,7 +58,7 @@ void handle_read(void) {
 }
 
 void handle_write(void) {
-    size_t address = (((size_t) PORTE & 0x1) << 8) | (size_t) PORTD;
+    size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
 
     TRISA = 0xff;
     uint8_t data = PORTA;
@@ -86,7 +86,7 @@ struct Ctrl {
     uint8_t sector_number;
     uint8_t head_number;
     uint8_t drive_number;
-    
+
     uint8_t status;
 };
 
@@ -133,15 +133,18 @@ void main(void) {
     uint16_t sector_size = SD_SPI_GetSectorSize();
     uint32_t sector_count = SD_SPI_GetSectorCount();
 
-
     while (1) {
         if (ctrl->request == REQUEST_READ) {
+            LED_SetLow();
+
             if (!SD_SPI_SectorRead(chs_to_lba_sector_number(ctrl), data_buffer, 1))
                 return;
 
             ctrl->sector_number++;
             ctrl->status = 0;
             ctrl->request = REQUEST_DONE;
+
+            LED_SetHigh();
         }
     }
 }
