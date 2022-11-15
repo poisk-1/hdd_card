@@ -105,6 +105,8 @@ uint32_t chs_to_lba_sector_number(struct Ctrl* ctrl) {
     return ((uint32_t) ctrl->cylinder_number * NUMBER_OF_HEADS + (uint32_t) ctrl->head_number) * NUMBER_OF_SECTORS + ((uint32_t) ctrl->sector_number - 1);
 }
 
+void putch (char c) { EUSART1_Write(c); }
+
 /*
                          Main application
  */
@@ -134,7 +136,7 @@ void main(void) {
 
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
-
+    
     while (1) {
         switch (ctrl->request) {
             case REQUEST_RESET:
@@ -142,6 +144,8 @@ void main(void) {
 
                 ctrl->status = SD_SPI_MediaInitialize() ? 0 : STATUS_RESET_FAILED;
                 ctrl->request = REQUEST_DONE;
+
+                printf("RESET\r\n");
 
                 LED_SetHigh();
 
@@ -152,6 +156,8 @@ void main(void) {
                 ctrl->status = SD_SPI_SectorRead(chs_to_lba_sector_number(ctrl), data_buffer, 1) ? 0 : STATUS_BAD_SECTOR;
                 ctrl->sector_number++;
                 ctrl->request = REQUEST_DONE;
+                
+                printf("READ\r\n");
 
                 LED_SetHigh();
                 break;

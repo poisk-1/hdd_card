@@ -55,6 +55,7 @@
 #include "interrupt_manager.h"
 #include "spi1.h"
 #include "ext_int.h"
+#include "eusart1.h"
 #include "sd_spi/sd_spi.h"
 #include "drivers/spi_master.h"
 
