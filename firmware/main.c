@@ -75,8 +75,16 @@ void handle_write(void) {
 
 enum Request {
     REQUEST_DONE = 0,
-    REQUEST_READ = 0x1,
-    REQUEST_WRITE = 0x2,
+    REQUEST_RESET = 0x1,
+    REQUEST_READ = 0x2,
+    REQUEST_WRITE = 0x3,
+};
+
+enum Status {
+    STATUS_NO_ERROR = 0,
+    STATUS_BAD_COMMAND = 0x1,
+    STATUS_BAD_SECTOR = 0x2,
+    STATUS_RESET_FAILED = 0x5
 };
 
 struct Ctrl {
@@ -91,7 +99,7 @@ struct Ctrl {
 };
 
 #define NUMBER_OF_HEADS 2
-#define NUMBER_OF_SECTORS 9
+#define NUMBER_OF_SECTORS 18
 
 uint32_t chs_to_lba_sector_number(struct Ctrl* ctrl) {
     return ((uint32_t) ctrl->cylinder_number * NUMBER_OF_HEADS + (uint32_t) ctrl->head_number) * NUMBER_OF_SECTORS + ((uint32_t) ctrl->sector_number - 1);
@@ -127,24 +135,26 @@ void main(void) {
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
 
-    if (!SD_SPI_MediaInitialize())
-        return;
-
-    uint16_t sector_size = SD_SPI_GetSectorSize();
-    uint32_t sector_count = SD_SPI_GetSectorCount();
-
     while (1) {
-        if (ctrl->request == REQUEST_READ) {
-            LED_SetLow();
+        switch (ctrl->request) {
+            case REQUEST_RESET:
+                LED_SetLow();
 
-            if (!SD_SPI_SectorRead(chs_to_lba_sector_number(ctrl), data_buffer, 1))
-                return;
+                ctrl->status = SD_SPI_MediaInitialize() ? 0 : STATUS_RESET_FAILED;
+                ctrl->request = REQUEST_DONE;
 
-            ctrl->sector_number++;
-            ctrl->status = 0;
-            ctrl->request = REQUEST_DONE;
+                LED_SetHigh();
 
-            LED_SetHigh();
+                break;
+            case REQUEST_READ:
+                LED_SetLow();
+
+                ctrl->status = SD_SPI_SectorRead(chs_to_lba_sector_number(ctrl), data_buffer, 1) ? 0 : STATUS_BAD_SECTOR;
+                ctrl->sector_number++;
+                ctrl->request = REQUEST_DONE;
+
+                LED_SetHigh();
+                break;
         }
     }
 }

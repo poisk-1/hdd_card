@@ -29,11 +29,10 @@ call display_string
 pop si
 %endmacro
 
-STATUS_NO_ERROR: equ 0x00
-STATUS_BAD_COMMAND: equ 0x01
-STATUS_BAD_SECTOR: equ 0x02
-STATUS_DISKETTE_WRITE_PROTECTED: equ 0x03
-STATUS_SECTOR_NOT_FOUND: equ 0x04
+REQUEST_DONE: equ 0x00
+REQUEST_INIT: equ 0x01
+REQUEST_READ: equ 0x02
+REQUEST_WRITE: equ 0x03
 
 %undef TRACE
 
@@ -100,8 +99,22 @@ int13h_func_reset:
 %ifdef TRACE
 	DisplayStringLine "reset!"
 %endif
-	mov ah, STATUS_NO_ERROR
+	push ds
+	push ax
+	mov ax, 0xe000
+	mov ds, ax
+	pop ax
+
+	mov byte [0x200], REQUEST_INIT
+
+int13h_func_reset_1:
+	cmp byte [0x200], REQUEST_DONE
+	jne int13h_func_reset_1
+
+	mov byte ah, [0x205]
 	call int13h_set_status
+
+	pop ds
 	jmp int13_iret
 
 int13h_func_status:
@@ -140,10 +153,10 @@ int13h_func_read:
 
 int13h_func_read_2:
 	sub si, si
-	mov byte [0x200], 0x1
+	mov byte [0x200], REQUEST_READ
 
 int13h_func_read_1:
-	cmp byte [0x200], 0x0
+	cmp byte [0x200], REQUEST_DONE
 	jne int13h_func_read_1
 
 	mov cx, 0x200
@@ -166,7 +179,7 @@ int13h_func_write:
 %ifdef TRACE
 	DisplayStringLine "write!"
 %endif
-	mov ah, STATUS_DISKETTE_WRITE_PROTECTED
+	mov ah, 0x3
 	call int13h_set_status
 	jmp int13_iret
 
