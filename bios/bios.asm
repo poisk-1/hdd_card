@@ -34,6 +34,17 @@ REQUEST_INIT: equ 0x01
 REQUEST_READ: equ 0x02
 REQUEST_WRITE: equ 0x03
 
+IO_SEGMENT: equ 0xe000
+
+DATA_BYTES: equ 0x200
+
+CTRL_REQUEST: equ DATA_BYTES
+CTRL_CYLINDER_NUMBER: equ DATA_BYTES + 1
+CTRL_SECTOR_NUMBER: equ DATA_BYTES + 2
+CTRL_HEAD_NUMBER: equ DATA_BYTES + 3
+CTRL_DRIVE_NUMBER: equ DATA_BYTES + 4
+CTRL_STATUS: equ DATA_BYTES + 5
+
 %undef TRACE
 
 section .text
@@ -74,7 +85,7 @@ int13h:
 	push bp
 	push ds
 
-	mov bp, cs
+	mov bp, IO_SEGMENT
 	mov ds, bp
 
 	cmp ah, 0x3
@@ -99,22 +110,15 @@ int13h_func_reset:
 %ifdef TRACE
 	DisplayStringLine "reset!"
 %endif
-	push ds
-	push ax
-	mov ax, 0xe000
-	mov ds, ax
-	pop ax
-
-	mov byte [0x200], REQUEST_INIT
+	mov byte [CTRL_REQUEST], REQUEST_INIT
 
 int13h_func_reset_1:
-	cmp byte [0x200], REQUEST_DONE
+	cmp byte [CTRL_REQUEST], REQUEST_DONE
 	jne int13h_func_reset_1
 
-	mov byte ah, [0x205]
+	mov byte ah, [CTRL_STATUS]
 	call int13h_set_status
 
-	pop ds
 	jmp int13_iret
 
 int13h_func_status:
@@ -131,48 +135,37 @@ int13h_func_read:
 %ifdef TRACE
 	DisplayStringLine "read!"
 %endif
-	push ds
 	push cx
 	push di
 	push si
-	pushf
-
-	cld
-
-	push ax
-	mov ax, 0xe000
-	mov ds, ax
-	pop ax
 
 	mov di, bx
 
-	mov byte [0x201], ch
-	mov byte [0x202], cl
-	mov byte [0x203], dh
-	mov byte [0x204], dl
+	mov byte [CTRL_CYLINDER_NUMBER], ch
+	mov byte [CTRL_SECTOR_NUMBER], cl
+	mov byte [CTRL_HEAD_NUMBER], dh
+	mov byte [CTRL_DRIVE_NUMBER], dl
 
 int13h_func_read_2:
 	sub si, si
-	mov byte [0x200], REQUEST_READ
+	mov byte [CTRL_REQUEST], REQUEST_READ
 
 int13h_func_read_1:
-	cmp byte [0x200], REQUEST_DONE
+	cmp byte [CTRL_REQUEST], REQUEST_DONE
 	jne int13h_func_read_1
 
-	mov cx, 0x200
+	mov cx, DATA_BYTES
 	rep movsb
 
 	dec al
 	jnz int13h_func_read_2
 
-	mov byte ah, [0x205]
+	mov byte ah, [CTRL_STATUS]
 	call int13h_set_status
 
-	popf
 	pop si
 	pop di
 	pop cx
-	pop ds
 	jmp int13_iret
 
 int13h_func_write:
