@@ -3,49 +3,64 @@ org 0
 
 section .text
 
-	; This must come first, before any other code or includes.
 entry:
-	db 0x55, 0xaa   ; Marker
-	db 0            ; Size / 512
-	jmp init        ; Code follows
+	db 0x55, 0xaa ; BIOS marker
+	db 0 ; BIOS size / 512 bytes
+	jmp init
 	db 0
 
 %macro DisplayStringLine 1
 section .data
-%%str: db %1, 0xd, 0xa, 0
+	%%str: db %1, 0xd, 0xa, 0
+
 section .text
-push si
-mov si, %%str
-call display_string
-pop si
+	push si
+	mov si, %%str
+	call display_string
+	pop si
 %endmacro
+
 %macro DisplayString 1
 section .data
-%%str: db %1, 0
+	%%str: db %1, 0
+
 section .text
-push si
-mov si, %%str
-call display_string
-pop si
+	push si
+	mov si, %%str
+	call display_string
+	pop si
 %endmacro
 
-REQUEST_DONE: equ 0x00
-REQUEST_INIT: equ 0x01
-REQUEST_READ: equ 0x02
-REQUEST_WRITE: equ 0x03
+%macro SubmitIo 1
+	mov byte [io.ctrl.request], %1
 
-IO_SEGMENT: equ 0xe000
+%%wait:
+	cmp byte [io.ctrl.request], ctrl_request_done
+	jne %%wait
 
-DATA_BYTES: equ 0x200
+	mov byte ah, [io.ctrl.status]
+%endmacro
 
-CTRL_REQUEST: equ DATA_BYTES
-CTRL_CYLINDER_NUMBER: equ DATA_BYTES + 1
-CTRL_SECTOR_NUMBER: equ DATA_BYTES + 2
-CTRL_HEAD_NUMBER: equ DATA_BYTES + 3
-CTRL_DRIVE_NUMBER: equ DATA_BYTES + 4
-CTRL_STATUS: equ DATA_BYTES + 5
+ctrl_request_done: equ 0x00
+ctrl_request_init: equ 0x01
+ctrl_request_read: equ 0x02
+ctrl_request_write: equ 0x03
 
-%undef TRACE
+io_segment: equ 0xe000
+
+io_data_size_bytes: equ 0x200
+
+struc io
+	.data: resb io_data_size_bytes
+
+	.ctrl.request resb 1
+	.ctrl.status resb 1
+
+	.ctrl.cylinder_number resb 1
+	.ctrl.sector_number resb 1
+	.ctrl.head_number resb 1
+	.ctrl.drive_number resb 1
+endstruc
 
 section .text
 
@@ -59,9 +74,7 @@ init:
 	mov ax, cs
 	mov ds, ax
 
-	mov ah, 0
-	mov al, 3
-	int 10h
+	call cls
 
 	DisplayStringLine "Poisk HDD card version 0.1"
 	DisplayStringLine "Copyright (c) 2022 Peter Hizalev"
@@ -70,6 +83,7 @@ init:
 	call install_int13h
 
 	call delay
+	call cls
 
 	pop ds
 	pop dx
@@ -82,102 +96,121 @@ int13h:
 	pushf
 	sti
 	cld
-	push bp
 	push ds
-
-	mov bp, IO_SEGMENT
-	mov ds, bp
-
-	cmp ah, 0x3
-	jg int13_iret_stc
-
-	mov bp, ax
-	xor al, al
-	xchg al, ah
-	shl ax, 1
-	xchg ax, bp
-	add bp, int13h_table
-
-	jmp [cs:bp]
-	
-int13h_table:
-	dw int13h_func_reset
-	dw int13h_func_status
-	dw int13h_func_read
-	dw int13h_func_write
-
-int13h_func_reset:
-%ifdef TRACE
-	DisplayStringLine "reset!"
-%endif
-	mov byte [CTRL_REQUEST], REQUEST_INIT
-
-int13h_func_reset_1:
-	cmp byte [CTRL_REQUEST], REQUEST_DONE
-	jne int13h_func_reset_1
-
-	mov byte ah, [CTRL_STATUS]
-	call int13h_set_status
-
-	jmp int13_iret
-
-int13h_func_status:
-%ifdef TRACE
-	DisplayStringLine "status!"
-%endif
-	call int13h_get_status
-	jmp int13_iret_clc
-
-	; AL - number of sectors
-	; CH, CL, DH, DL - address of first sector
-	; ES:BX - pointer to buffer
-int13h_func_read:
-%ifdef TRACE
-	DisplayStringLine "read!"
-%endif
+	push bx
 	push cx
 	push di
 	push si
 
-	mov di, bx
+	mov di, io_segment
+	mov ds, di ; DS to point to IO memory
 
-	mov byte [CTRL_CYLINDER_NUMBER], ch
-	mov byte [CTRL_SECTOR_NUMBER], cl
-	mov byte [CTRL_HEAD_NUMBER], dh
-	mov byte [CTRL_DRIVE_NUMBER], dl
+	cmp ah, 0x3
+	jg int13h_return_error
 
-int13h_func_read_2:
-	sub si, si
-	mov byte [CTRL_REQUEST], REQUEST_READ
+	mov di, ax
+	xor al, al
+	xchg al, ah
+	shl ax, 1
+	xchg ax, di
+	add di, int13h_table
 
-int13h_func_read_1:
-	cmp byte [CTRL_REQUEST], REQUEST_DONE
-	jne int13h_func_read_1
+	jmp [cs:di]
+	
+int13h_table:
+	dw int13h_reset
+	dw int13h_get_status
+	dw int13h_read
+	dw int13h_write
 
-	mov cx, DATA_BYTES
-	rep movsb
+	; Returns:
+	; AH - status
+int13h_reset:
+	SubmitIo ctrl_request_init
+
+	call set_status
+
+	cmp ah, 0 ; has reset error occured?
+	jne int13h_return_error
+	jmp int13h_return_success
+
+	; Returns:
+	; AH - status
+int13h_get_status:
+	call get_status
+
+	jmp int13h_return_success
+
+	; AL - number of sectors
+	; CH, CL, DH, DL - CSHD address of first sector
+	; ES:BX - pointer to buffer
+	;
+	; Returns:
+	; AH - status
+int13h_read:
+
+	mov di, bx ; make ES:DI point to the read buffer
+
+	mov byte [io.ctrl.cylinder_number], ch
+	mov byte [io.ctrl.sector_number], cl
+	mov byte [io.ctrl.head_number], dh
+	mov byte [io.ctrl.drive_number], dl
+
+	mov bl, al ; save number of sectors to read
+
+int13h_read_next_sector:
+	sub si, si ; make DS:SI to point to beginning of the IO buffer
+
+	SubmitIo ctrl_request_read
+
+	call set_status
+
+	cmp ah, 0 ; has read error occured?
+	jne int13h_read_error
+
+	mov cx, io_data_size_bytes
+	rep movsb ; copy data bytes from IO buffer to read buffer
 
 	dec al
-	jnz int13h_func_read_2
+	jnz int13h_read_next_sector
 
-	mov byte ah, [CTRL_STATUS]
-	call int13h_set_status
+	mov al, bl ; all sectors read
 
+	jmp int13h_return_success
+
+int13h_read_error:
+	sub bl, al ; some sectors read
+	mov al, bl
+
+	jne int13h_return_error
+
+int13h_write:
+	mov ah, 0x3
+	call set_status
+	jmp int13h_return_error
+
+int13h_return_success:
 	pop si
 	pop di
 	pop cx
-	jmp int13_iret
+	pop bx
+	pop ds
+	popf
+	clc
+	retf 2
 
-int13h_func_write:
-%ifdef TRACE
-	DisplayStringLine "write!"
-%endif
-	mov ah, 0x3
-	call int13h_set_status
-	jmp int13_iret
+int13h_return_error:
+	pop si
+	pop di
+	pop cx
+	pop ds
+	pop bp
+	popf
+	stc
+	retf 2	
 
 	; Status in AH
-int13h_set_status:
+set_status:
 	push ds
 	push ax
 	mov ax, 0x40
@@ -187,8 +220,9 @@ int13h_set_status:
 	pop ds
 	ret
 
+	; Returns:
 	; Status in AL
-int13h_get_status:
+get_status:
 	push ds
 	push ax
 	mov ax, 0x40
@@ -197,25 +231,6 @@ int13h_get_status:
 	mov al, [0x41]
 	pop ds
 	ret
-
-int13_iret:
-	cmp ah, 0
-	je int13_iret_clc
-	jmp int13_iret_stc
-
-int13_iret_clc:
-	pop ds
-	pop bp
-	popf
-	clc
-	retf 2
-
-int13_iret_stc:
-	pop ds
-	pop bp
-	popf
-	stc
-	retf 2	
 
 install_ipl_diskette:
 	push ds
@@ -246,15 +261,20 @@ install_int13h:
 	ret
 
 delay:
-	push ax
-	mov ax, 0xffff
-.loop:
-	dec ax
+	push cx
+	mov cx, 0xffff
+delay_continue:
 	nop
 	nop
 	nop
-	jnz .loop
-	pop ax
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	loop delay_continue
+	pop cx
 	ret
 
 	; String address in DS:SI
@@ -309,4 +329,12 @@ read_char:
 	pop dx
 	pop cx
 	pop bx
+	ret
+
+cls:
+	push ax
+	mov ah, 0
+	mov al, 3
+	int 10h
+	pop ax
 	ret

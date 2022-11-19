@@ -89,13 +89,12 @@ enum Status {
 
 struct Ctrl {
     uint8_t request;
+    uint8_t status;
 
     uint8_t cylinder_number;
     uint8_t sector_number;
     uint8_t head_number;
     uint8_t drive_number;
-
-    uint8_t status;
 };
 
 #define NUMBER_OF_HEADS 2
