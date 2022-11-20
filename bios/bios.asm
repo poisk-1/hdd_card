@@ -1,30 +1,13 @@
 cpu 8086
 org 0
 
-section .text
-
-entry:
-	db 0x55, 0xaa ; BIOS marker
-	db 0 ; BIOS size / 512 bytes
-	jmp init
-	db 0
-
-%macro DisplayStringLine 1
-section .data
-	%%str: db %1, 0xd, 0xa, 0
-
-section .text
-	push si
-	mov si, %%str
-	call display_string
-	pop si
-%endmacro
-
 %macro DisplayString 1
-section .data
+	[section .data]
+	
 	%%str: db %1, 0
 
-section .text
+	__SECT__
+
 	push si
 	mov si, %%str
 	call display_string
@@ -64,7 +47,9 @@ endstruc
 
 section .text
 
-init:
+	db 0x55, 0xaa ; BIOS marker
+	db 0 ; BIOS size / 512 bytes
+
 	push ax
 	push bx
 	push cx
@@ -76,8 +61,8 @@ init:
 
 	call cls
 
-	DisplayStringLine "Poisk HDD card version 0.1"
-	DisplayStringLine "Copyright (c) 2022 Peter Hizalev"
+	DisplayString `Poisk HDD card version 0.1\r\n`
+	DisplayString `Copyright (c) 2022 Peter Hizalev\r\n`
 
 	call install_ipl_diskette
 	call install_int13h
@@ -106,40 +91,40 @@ int13h:
 	mov ds, di ; DS to point to IO memory
 
 	cmp ah, 0x3
-	jg int13h_return_error
+	jg .return_error
 
 	mov di, ax
 	xor al, al
 	xchg al, ah
 	shl ax, 1
 	xchg ax, di
-	add di, int13h_table
+	add di, .table
 
 	jmp [cs:di]
 	
-int13h_table:
-	dw int13h_reset
-	dw int13h_get_status
-	dw int13h_read
-	dw int13h_write
+.table:
+	dw .reset
+	dw .get_status
+	dw .read
+	dw .write
 
 	; Returns:
 	; AH - status
-int13h_reset:
+.reset:
 	SubmitIo ctrl_request_init
 
 	call set_status
 
 	cmp ah, 0 ; has reset error occured?
-	jne int13h_return_error
-	jmp int13h_return_success
+	jne .return_error
+	jmp .return_success
 
 	; Returns:
 	; AH - status
-int13h_get_status:
+.get_status:
 	call get_status
 
-	jmp int13h_return_success
+	jmp .return_success
 
 	; AL - number of sectors
 	; CH, CL, DH, DL - CSHD address of first sector
@@ -147,7 +132,7 @@ int13h_get_status:
 	;
 	; Returns:
 	; AH - status
-int13h_read:
+.read:
 
 	mov di, bx ; make ES:DI point to the read buffer
 
@@ -158,7 +143,7 @@ int13h_read:
 
 	mov bl, al ; save number of sectors to read
 
-int13h_read_next_sector:
+.read_next_sector:
 	sub si, si ; make DS:SI to point to beginning of the IO buffer
 
 	SubmitIo ctrl_request_read
@@ -166,30 +151,30 @@ int13h_read_next_sector:
 	call set_status
 
 	cmp ah, 0 ; has read error occured?
-	jne int13h_read_error
+	jne .read_error
 
 	mov cx, io_data_size_bytes
 	rep movsb ; copy data bytes from IO buffer to read buffer
 
 	dec al
-	jnz int13h_read_next_sector
+	jnz .read_next_sector
 
 	mov al, bl ; all sectors read
 
-	jmp int13h_return_success
+	jmp .return_success
 
-int13h_read_error:
+.read_error:
 	sub bl, al ; some sectors read
 	mov al, bl
 
-	jne int13h_return_error
+	jne .return_error
 
-int13h_write:
+.write:
 	mov ah, 0x3
 	call set_status
-	jmp int13h_return_error
+	jmp .return_error
 
-int13h_return_success:
+.return_success:
 	pop si
 	pop di
 	pop cx
@@ -199,7 +184,7 @@ int13h_return_success:
 	clc
 	retf 2
 
-int13h_return_error:
+.return_error:
 	pop si
 	pop di
 	pop cx
@@ -263,7 +248,7 @@ install_int13h:
 delay:
 	push cx
 	mov cx, 0xffff
-delay_continue:
+.continue:
 	nop
 	nop
 	nop
@@ -273,7 +258,7 @@ delay_continue:
 	nop
 	nop
 	nop
-	loop delay_continue
+	loop .continue
 	pop cx
 	ret
 
@@ -283,15 +268,15 @@ display_string:
 	push bx
 	mov bx, si
 	
-display_string_1:
+.next_char:
 	mov al,[bx]
 	cmp al,0
-	jz display_string_2
+	jz .done
 	call display_char
 	inc bx
-	jmp display_string_1
+	jmp .next_char
 
-display_string_2:
+.done:
 	pop bx
 	pop ax
 	ret
