@@ -57,6 +57,7 @@
 #include "ext_int.h"
 #include "eusart1.h"
 #include "sd_spi/sd_spi.h"
+#include "fatfs/ff.h"
 #include "drivers/spi_master.h"
 
 

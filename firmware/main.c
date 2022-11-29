@@ -45,8 +45,10 @@
 
 #include "mcc_generated_files/mcc.h"
 
+#define DATA_BUFFER_SIZE 0x200
+
 static uint8_t ctrl_buffer[0x80];
-static uint8_t data_buffer[0x200];
+static uint8_t data_buffer[DATA_BUFFER_SIZE];
 
 void handle_read(void) {
     size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
@@ -108,6 +110,9 @@ void putch(char c) {
     EUSART1_Write(c);
 }
 
+static FATFS fs;
+static FIL floppy_file;
+
 /*
                          Main application
  */
@@ -118,7 +123,7 @@ void main(void) {
     INT1_SetInterruptHandler(handle_write);
 
     memset(ctrl_buffer, 0x00, 0x80);
-    memset(data_buffer, 0x00, 0x200);
+    memset(data_buffer, 0x00, DATA_BUFFER_SIZE);
 
     struct Ctrl *ctrl = (struct Ctrl *) ctrl_buffer;
 
@@ -145,7 +150,17 @@ void main(void) {
 
                 printf("RESET\r\n");
 
-                ctrl->status = SD_SPI_MediaInitialize() ? 0 : STATUS_RESET_FAILED;
+                f_close(&floppy_file);
+                f_mount(0, "0:", 0);
+
+                if (SD_SPI_IsMediaPresent()) {
+                    ctrl->status = (
+                            f_mount(&fs, "0:", 1) == FR_OK &&
+                            f_open(&floppy_file, "FLOPPY.IMG", FA_READ) == FR_OK) ? 0 : STATUS_RESET_FAILED;
+                } else {
+                    ctrl->status = STATUS_RESET_FAILED;
+                }
+
                 ctrl->request = REQUEST_DONE;
 
                 LED_SetHigh();
@@ -161,9 +176,14 @@ void main(void) {
                         ctrl->head_number,
                         ctrl->sector_number
                         );
-                
-                ctrl->status = SD_SPI_SectorRead(chs_to_lba_sector_number(ctrl), data_buffer, 1) ? 0 : STATUS_BAD_SECTOR;
-                ctrl->sector_number++;                
+
+                UINT read_bytes = 0;
+                ctrl->status = (
+                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(ctrl)) == FR_OK &&
+                        f_read(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
+                        read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+
+                ctrl->sector_number++;
                 ctrl->request = REQUEST_DONE;
 
                 LED_SetHigh();

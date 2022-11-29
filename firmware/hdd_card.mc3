@@ -10,6 +10,10 @@
          <string>class com.microchip.mcc.mcu8.modules.extint.EXTINT</string>
       </entry>
       <entry>
+         <string>FatFs</string>
+         <string>class com.microchip.mcc.fatfs.modules.fatfs.FatFs</string>
+      </entry>
+      <entry>
          <string>INTERNAL OSCILLATOR</string>
          <string>class com.microchip.mcc.mcu8.systemManager.osc.Osc</string>
       </entry>
@@ -56,8 +60,9 @@
    </usedClasses>
    <usedLibraries class="java.util.ArrayList">
       <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.mcu8.Mcu8PeripheralLibrary" version="1.82.0"/>
-      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.sdcard.SDCardLibrary" version="1.1.0"/>
       <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.foundationservices.library.FoundationServicesLibrary" version="0.2.3"/>
+      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.sdcard.SDCardLibrary" version="1.1.0"/>
+      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.fatfs.FatFsLibrary" version="1.1.0"/>
    </usedLibraries>
    <tokenMap class="java.util.TreeMap">
       <entry>
@@ -683,6 +688,150 @@
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.SettingKey" moduleName="EXT_INT" registerAlias="PIR0" settingAlias="INT2IF"/>
          <value>no_interrupt</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="DRIVER_TABLE"/>
+         <value>{number=0, driver=SD Card (SPI), label=DRVA}</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_CODE_PAGE"/>
+         <value>437</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_EXFAT"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_LOCK"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_MINIMIZE"/>
+         <value>2</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_NORTC"/>
+         <value>1</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_READONLY"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_REENTRANT"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_RPATH"/>
+         <value>1</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_TIMEOUT"/>
+         <value>1000</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_TINY"/>
+         <value>1</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_LFN_BUF"/>
+         <value>255</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_LFN_UNICODE"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_MAX_LFN"/>
+         <value>255</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_MAX_SS"/>
+         <value>512</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_MIN_SS"/>
+         <value>512</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_MULTI_PARTITION"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_NORTC_FIXED_DATE"/>
+         <value>2022-11-28</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_SFN_BUF"/>
+         <value>12</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_STRF_ENCODE"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_STR_VOLUME_ID"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_SYNC_t"/>
+         <value>HANDLE</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_TRUST_FREE_CLUSTER_COUNT"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_TRUST_LAST_ALLOCATED"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_CHMOD"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_EXPAND"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_FASTSEEK"/>
+         <value>1</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_FIND"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_FORWARD"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_LABEL"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_LFN"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_MKFS"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_STRFUNC"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_USE_TRIM"/>
+         <value>0</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="GENERATE_DEMO"/>
+         <value>1</value>
+      </entry>
+      <entry>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="UNASSIGNED_DRIVERS"/>
+         <value>{id=Example_Template_Driver}</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="INTERNAL OSCILLATOR" name="CurrentPllString"/>
@@ -2317,15 +2466,15 @@
          <value>disabled</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT0PPS%aux0"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT0PPS%aux1"/>
          <value>8</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT1PPS%aux1"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT1PPS%aux2"/>
          <value>9</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT2PPS%aux2"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT2PPS%aux3"/>
          <value>%DESELECT%</value>
       </entry>
       <entry>
@@ -2477,7 +2626,7 @@
          <value>disabled</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="RXPPS%aux3"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="RXPPS%aux0"/>
          <value>23</value>
       </entry>
       <entry>
@@ -7926,11 +8075,11 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="pubSubSPIMASTERConfigurations"/>
-         <value>419.5313685843116</value>
+         <value>6454.000577674478</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="pubSubspiSubscriber"/>
-         <value>6932.893697986446</value>
+         <value>6247.421552237858</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="spiSubscriber"/>
@@ -7942,7 +8091,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="validate"/>
-         <value>0.8025012447077555</value>
+         <value>0.3137462864862862</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.PropertyTokenKey" moduleName="SPIMASTER" name="spiConfigurations%0%dataInputSample"/>
@@ -8626,7 +8775,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="UART" name="pubSubUARTConfigurations"/>
-         <value>5335.787179265996</value>
+         <value>5415.4736944769165</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="UART" name="usecaseComboSettings"/>
@@ -8634,7 +8783,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="UART" name="validate"/>
-         <value>0.874496217190794</value>
+         <value>0.019511545965748</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.PropertyTokenKey" moduleName="UART" name="uartConfigurationList%0%interruptState"/>
@@ -8691,10 +8840,6 @@
          <hash>10af3a0c69eda5f0101cb87ee805f2457fed3a3ceb463f17a55a1aa45c57fbcc</hash>
       </entry>
       <entry>
-         <file>mcc_generated_files/pin_manager.h</file>
-         <hash>cadfe141fef66f5de82b98054d6402388cf8cd8ac22956081f512ac46842f322</hash>
-      </entry>
-      <entry>
          <file>mcc_generated_files/spi1.c</file>
          <hash>ae7affbf3434c0eec4caee46626784d321bc9bfa1274fe8132d51ad660b7a78a</hash>
       </entry>
@@ -8707,12 +8852,12 @@
          <hash>32e2aa9a5bf2267d3c33aa7867c73f225a4fadb56fd6104da69ee942a79edfd9</hash>
       </entry>
       <entry>
-         <file>main.c</file>
-         <hash>32360e90a8cada7de04c443f47111a6de78d5541405feed7e9262307196fbacc</hash>
-      </entry>
-      <entry>
          <file>mcc_generated_files/ext_int.h</file>
          <hash>5d765559a77b063a6e1b5bade11cd7cb20de67f2fe706c656c2b1630eb0bdfe6</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/diskio.h</file>
+         <hash>eb1ef7b2ae900e5fa80c78b674723ef3227b26209a17a4006cc2c96d89c09823</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/sd_spi/sd_spi.c</file>
@@ -8731,24 +8876,8 @@
          <hash>f65e6cbd073da29c5b6858fb9a7d84e921af9a4c467d9950ac6ada2c870a0608</hash>
       </entry>
       <entry>
-         <file>mcc_generated_files/drivers/uart.h</file>
-         <hash>6f6726e12493b247d36a3b6d7dcfb5ead7473cef69ea2166d4a331152a9220cb</hash>
-      </entry>
-      <entry>
-         <file>mcc_generated_files/device_config.h</file>
-         <hash>fa2610677dd0aa24e8b8e59f56fef7ee13715acf81462c8987abe666ec282552</hash>
-      </entry>
-      <entry>
-         <file>mcc_generated_files/drivers/spi_master.h</file>
-         <hash>5f10af22baa0aca5873ca333bccee5aca1acbaf919516f9ea6e339d7d576d02d</hash>
-      </entry>
-      <entry>
-         <file>mcc_generated_files/drivers/spi_master.c</file>
-         <hash>58b64aa302ef366d96f5b51fbbca7d86e9f688e612188cafb58dc0492f579f64</hash>
-      </entry>
-      <entry>
-         <file>mcc_generated_files/drivers/uart.c</file>
-         <hash>41c983026819f2d89e74e26da6f9ff22e3708095bfa1cac82538fb4be484bee1</hash>
+         <file>mcc_generated_files/fatfs/ffsystem.c</file>
+         <hash>9abd55ef008afed7a5330d4d276ea41b89a27933e7fef613c5a05671c577ee15</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/ext_int.c</file>
@@ -8760,11 +8889,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files/mcc.h</file>
-         <hash>3a8f185a2a008747950db0832b321b5781a5b0c1f2169c9120dd0753b20a5337</hash>
-      </entry>
-      <entry>
-         <file>mcc_generated_files/device_config.c</file>
-         <hash>1e145493f8501a684a964d03827da4285ae7adf3152da5ef083eaea4567a9376</hash>
+         <hash>4bec8537d6b6964bb38b9e5f1d58d4d8aa31e91c6ce9ec8a35a1355c4a209b0d</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/interrupt_manager.c</file>
@@ -8781,6 +8906,70 @@
       <entry>
          <file>mcc_generated_files/pin_manager.c</file>
          <hash>c34936643d202b5b6e7bdefaf481186bc571feba37ac81d0becc33cf62447f7f</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/pin_manager.h</file>
+         <hash>cadfe141fef66f5de82b98054d6402388cf8cd8ac22956081f512ac46842f322</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/ffunicode.c</file>
+         <hash>37b594b653b0e5c6fbf25428ccb56240e5c8149d786a22d0b74f17d8fd936341</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/fatfs_demo.h</file>
+         <hash>60b79d81ea7104386259b44bbbcf5c9439e625ba9c4cd7afc72490a9366d2dc3</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/integer.h</file>
+         <hash>a2f4450985098bc47c270a2df95779dd88787a3fbac90e2ae5e6bb916296e707</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/ffconf.h</file>
+         <hash>85d1f920ceffbf33e79f88f462cd54ded1c71daf50cf73986be1235a429057ad</hash>
+      </entry>
+      <entry>
+         <file>main.c</file>
+         <hash>32360e90a8cada7de04c443f47111a6de78d5541405feed7e9262307196fbacc</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/fatfs_demo.c</file>
+         <hash>bc61bc71d20382e6d0ab4f3f9848060da84083d63df5279a52add307dd2d93c2</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/drivers/uart.h</file>
+         <hash>6f6726e12493b247d36a3b6d7dcfb5ead7473cef69ea2166d4a331152a9220cb</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/device_config.h</file>
+         <hash>fa2610677dd0aa24e8b8e59f56fef7ee13715acf81462c8987abe666ec282552</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/ff.c</file>
+         <hash>cdc61ee4b01c6e3eb1da72d30a51f0d8a52d6c0af78d4aeb025e66fcfcc95bfb</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/drivers/spi_master.h</file>
+         <hash>5f10af22baa0aca5873ca333bccee5aca1acbaf919516f9ea6e339d7d576d02d</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/ff.h</file>
+         <hash>7b2cc1676a4968ffecb11fbcc3d318ab8aa32046e5667db76dfb99fd58bef2a4</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/drivers/spi_master.c</file>
+         <hash>58b64aa302ef366d96f5b51fbbca7d86e9f688e612188cafb58dc0492f579f64</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/drivers/uart.c</file>
+         <hash>41c983026819f2d89e74e26da6f9ff22e3708095bfa1cac82538fb4be484bee1</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/device_config.c</file>
+         <hash>1e145493f8501a684a964d03827da4285ae7adf3152da5ef083eaea4567a9376</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/fatfs/diskio.c</file>
+         <hash>15fe9b6a3cf4ba1d9fb8f8d312b983a9d708a987cf0be0eca0f289be427e6d13</hash>
       </entry>
    </generatedFileHashHistoryMap>
 </config>
