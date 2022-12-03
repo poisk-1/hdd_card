@@ -126,15 +126,15 @@ int13h:
 
 	jmp .return_success
 
-	; AL - number of sectors
+	; AL - number of sectors to read
 	; CH, CL, DH, DL - CSHD address of first sector
-	; ES:BX - pointer to buffer
+	; ES:BX - pointer to the read buffer
 	;
 	; Returns:
 	; AH - status
 .read:
 
-	mov di, bx ; make ES:DI point to the read buffer
+	mov di, bx ; make DI point to the beginning of the read buffer
 
 	mov byte [io.ctrl.cylinder_number], ch
 	mov byte [io.ctrl.sector_number], cl
@@ -144,7 +144,7 @@ int13h:
 	mov bl, al ; save number of sectors to read
 
 .read_next_sector:
-	sub si, si ; make DS:SI to point to beginning of the IO buffer
+	sub si, si ; make SI to point to the beginning of the IO buffer
 
 	SubmitIo ctrl_request_read
 
@@ -154,7 +154,7 @@ int13h:
 	jne .read_error
 
 	mov cx, io_data_size_bytes
-	rep movsb ; copy data bytes from IO buffer to read buffer
+	rep movsb ; copy data bytes from IO buffer (DS:SI) to read buffer (ES:DI)
 
 	dec al
 	jnz .read_next_sector
@@ -169,10 +169,58 @@ int13h:
 
 	jne .return_error
 
+	; AL - number of sectors to write
+	; CH, CL, DH, DL - CSHD address of first sector
+	; ES:BX - pointer to the write buffer
+	;
+	; Returns:
+	; AH - status
 .write:
-	mov ah, 0x3
+	mov si, bx ; make SI point to the beginning of the write buffer
+
+	mov byte [io.ctrl.cylinder_number], ch
+	mov byte [io.ctrl.sector_number], cl
+	mov byte [io.ctrl.head_number], dh
+	mov byte [io.ctrl.drive_number], dl
+
+	mov bl, al ; save number of sectors to write
+
+.write_next_sector:
+	sub di, di ; make DI to point to the beginning of the IO buffer
+
+	mov cx, io_data_size_bytes
+
+	push es
+	push ds
+	pop es
+	pop ds ; swap DS and ES
+
+	rep movsb ; copy data bytes from write buffer (DS:SI) to IO buffer (ES:DI)
+
+	push es
+	push ds
+	pop es
+	pop ds ; swap DS and ES
+
+	SubmitIo ctrl_request_write
+
 	call set_status
-	jmp .return_error
+
+	cmp ah, 0 ; has read error occured?
+	jne .write_error
+
+	dec al
+	jnz .write_next_sector
+
+	mov al, bl ; all sectors read
+
+	jmp .return_success
+
+.write_error:
+	sub bl, al ; some sectors read
+	mov al, bl
+
+	jne .return_error
 
 .return_success:
 	pop si

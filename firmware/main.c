@@ -52,19 +52,21 @@ static uint8_t data_buffer[DATA_BUFFER_SIZE];
 
 void handle_read(void) {
     size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
+    uint8_t data = SEL_IO_DATA_GetValue() ? ctrl_buffer[address] : data_buffer[address];
 
-    PORTA = SEL_IO_DATA_GetValue() ? ctrl_buffer[address] : data_buffer[address];
+    TRISA = 0x00;
+    PORTA = data;
 
     ACK_IO_SetLow();
     ACK_IO_SetHigh();
+
+    TRISA = 0xff;
 }
 
 void handle_write(void) {
-    size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
 
-    TRISA = 0xff;
+    size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
     uint8_t data = PORTA;
-    TRISA = 0x00;
 
     if (SEL_IO_DATA_GetValue())
         ctrl_buffer[address] = data;
@@ -144,50 +146,82 @@ void main(void) {
     //INTERRUPT_PeripheralInterruptDisable();
 
     while (1) {
-        switch (ctrl->request) {
-            case REQUEST_RESET:
-                LED_SetLow();
+        f_mount(0, "0:", 0);
 
-                printf("RESET\r\n");
+        if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
+            while (SD_SPI_IsMediaPresent()) {
+                switch (ctrl->request) {
+                    case REQUEST_RESET:
+                        LED_SetLow();
 
-                f_close(&floppy_file);
-                f_mount(0, "0:", 0);
+                        printf("RESET\r\n");
 
-                if (SD_SPI_IsMediaPresent()) {
-                    ctrl->status = (
-                            f_mount(&fs, "0:", 1) == FR_OK &&
-                            f_open(&floppy_file, "FLOPPY.IMG", FA_READ) == FR_OK) ? 0 : STATUS_RESET_FAILED;
-                } else {
-                    ctrl->status = STATUS_RESET_FAILED;
+                        ctrl->status = (
+                                f_open(&floppy_file, "FLOPPY.IMG", FA_READ) == FR_OK &&
+                                f_close(&floppy_file) == FR_OK) ? 0 : STATUS_RESET_FAILED;
+
+                        ctrl->request = REQUEST_DONE;
+
+                        LED_SetHigh();
+
+                        break;
+                    case REQUEST_READ:
+                        LED_SetLow();
+
+                        printf(
+                                "READ[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                ctrl->drive_number,
+                                ctrl->cylinder_number,
+                                ctrl->head_number,
+                                ctrl->sector_number
+                                );
+
+                        UINT read_bytes = 0;
+                        ctrl->status = (
+                                f_open(&floppy_file, "FLOPPY.IMG", FA_READ) == FR_OK &&
+                                f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(ctrl)) == FR_OK &&
+                                f_read(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
+                                f_close(&floppy_file) == FR_OK &&
+                                read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+
+                        ctrl->sector_number++;
+                        ctrl->request = REQUEST_DONE;
+
+                        LED_SetHigh();
+                        break;
+
+                    case REQUEST_WRITE:
+                        LED_SetLow();
+
+                        printf(
+                                "WRITE[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                ctrl->drive_number,
+                                ctrl->cylinder_number,
+                                ctrl->head_number,
+                                ctrl->sector_number
+                                );
+
+                        UINT written_bytes = 0;
+                        ctrl->status = (
+                                f_open(&floppy_file, "FLOPPY.IMG", FA_WRITE) == FR_OK &&
+                                f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(ctrl)) == FR_OK &&
+                                f_write(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
+                                f_close(&floppy_file) == FR_OK &&
+                                written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+
+                        ctrl->sector_number++;
+                        ctrl->request = REQUEST_DONE;
+
+                        LED_SetHigh();
+                        break;
                 }
-
+            }
+        } else {
+            if (ctrl->request) {
+                ctrl->status = STATUS_RESET_FAILED;
                 ctrl->request = REQUEST_DONE;
+            }
 
-                LED_SetHigh();
-
-                break;
-            case REQUEST_READ:
-                LED_SetLow();
-
-                printf(
-                        "READ[d=%d,c=%d,h=%d,s=%d]\r\n",
-                        ctrl->drive_number,
-                        ctrl->cylinder_number,
-                        ctrl->head_number,
-                        ctrl->sector_number
-                        );
-
-                UINT read_bytes = 0;
-                ctrl->status = (
-                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(ctrl)) == FR_OK &&
-                        f_read(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
-                        read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
-
-                ctrl->sector_number++;
-                ctrl->request = REQUEST_DONE;
-
-                LED_SetHigh();
-                break;
         }
     }
 }
