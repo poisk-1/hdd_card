@@ -406,7 +406,7 @@
         (name "Pin_a8" (effects (font (size 1.27 1.27))))
         (number "a8" (effects (font (size 1.27 1.27))))
       )
-      (pin passive line (at -5.08 17.78 0) (length 3.81)
+      (pin input line (at -5.08 17.78 0) (length 3.81)
         (name "Pin_a9" (effects (font (size 1.27 1.27))))
         (number "a9" (effects (font (size 1.27 1.27))))
       )
