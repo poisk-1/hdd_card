@@ -144,11 +144,11 @@ void main(void) {
 
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
-
+    
     while (1) {
-        f_mount(0, "0:", 0);
-
         if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
+            printf("MOUNTED\r\n");
+            
             while (SD_SPI_IsMediaPresent()) {
                 switch (ctrl->request) {
                     case REQUEST_RESET:
@@ -216,6 +216,10 @@ void main(void) {
                         break;
                 }
             }
+            
+            f_mount(0, "0:", 0);
+
+            printf("UNMOUNTED\r\n");
         } else {
             if (ctrl->request) {
                 ctrl->status = STATUS_RESET_FAILED;
