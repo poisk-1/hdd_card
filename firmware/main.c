@@ -51,8 +51,19 @@ static uint8_t ctrl_buffer[0x80];
 static uint8_t data_buffer[DATA_BUFFER_SIZE];
 
 void handle_read(void) {
-    size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
-    uint8_t data = SEL_IO_DATA_GetValue() ? ctrl_buffer[address] : data_buffer[address];
+    size_t sel = (size_t) (PORTB & 0xf);
+    size_t address = (size_t) PORTD;
+    uint8_t data = 0;
+
+    switch (sel) {
+        case 0:
+        case 1:
+            data = data_buffer[address | ((size_t) sel << 8)];
+            break;
+        case 2:
+            data = ctrl_buffer[address];
+            break;
+    }
 
     TRISA = 0x00;
     PORTA = data;
@@ -64,14 +75,19 @@ void handle_read(void) {
 }
 
 void handle_write(void) {
-
-    size_t address = (((size_t) ADDR_8_GetValue()) << 8) | (size_t) PORTD;
+    size_t sel = (size_t) (PORTB & 0xf);
+    size_t address = (size_t) PORTD;
     uint8_t data = PORTA;
 
-    if (SEL_IO_DATA_GetValue())
-        ctrl_buffer[address] = data;
-    else
-        data_buffer[address] = data;
+    switch (sel) {
+        case 0:
+        case 1:
+            data_buffer[address | ((size_t) sel << 8)] = data;
+            break;
+        case 2:
+            ctrl_buffer[address] = data;
+            break;
+    }
 
     ACK_IO_SetLow();
     ACK_IO_SetHigh();
@@ -144,11 +160,11 @@ void main(void) {
 
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
-    
+
     while (1) {
         if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
             printf("MOUNTED\r\n");
-            
+
             while (SD_SPI_IsMediaPresent()) {
                 switch (ctrl->request) {
                     case REQUEST_RESET:
@@ -216,7 +232,7 @@ void main(void) {
                         break;
                 }
             }
-            
+
             f_mount(0, "0:", 0);
 
             printf("UNMOUNTED\r\n");

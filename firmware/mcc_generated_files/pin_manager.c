@@ -127,9 +127,9 @@ void PIN_MANAGER_Initialize(void)
     RC0PPS = 0x0F;   //RC0->MSSP1:SCK1;    
     SSP1CLKPPS = 0x10;   //RC0->MSSP1:SCK1;    
     RX1PPS = 0x17;   //RC7->EUSART1:RX1;    
-    INT0PPS = 0x08;   //RB0->EXT_INT:INT0;    
+    INT0PPS = 0x0C;   //RB4->EXT_INT:INT0;    
     RC2PPS = 0x10;   //RC2->MSSP1:SDO1;    
-    INT1PPS = 0x09;   //RB1->EXT_INT:INT1;    
+    INT1PPS = 0x0D;   //RB5->EXT_INT:INT1;    
     RC6PPS = 0x09;   //RC6->EUSART1:TX1;    
     SSP1DATPPS = 0x11;   //RC1->MSSP1:SDI1;    
 }

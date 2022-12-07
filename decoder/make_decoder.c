@@ -8,11 +8,9 @@ const size_t rom_bits = 13;
 const size_t rom_size = 1 << rom_bits;
 
 const size_t io_base = 0xe0000;
-const size_t io_data_size = 0x200;
-const size_t io_ctrl_size = 0x80;
+const size_t io_size = 0x1000;
 
-const size_t sel_io_bit = 0;
-const size_t sel_io_data_bit = 1;
+const size_t sel_io_bit = 6;
 
 int main(int argc, char **argv) {
   if (argc != 2) {
@@ -35,18 +33,14 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  for (size_t i = 0; i < (1 << 20); i++) {
-    size_t j = i >> (address_bits - rom_bits);
-    uint8_t flags = (1 << sel_io_bit) | (1 << sel_io_data_bit);
+  for (size_t address = 0; address < (1 << 20); address++) {
+    uint8_t data = 0xff;
 
-    if (i >= io_base && i < (io_base + io_data_size + io_ctrl_size)) {
-      flags &= ~(1 << sel_io_bit);
-    }
-    if (i >= io_base && i < (io_base + io_data_size)) {
-      flags &= ~(1 << sel_io_data_bit);
+    if (address >= io_base && address < (io_base + io_size)) {
+      data = (~(1 << sel_io_bit) & 0xf0) | ((address >> 8) & 0xf);
     }
 
-    rom_buffer[j] = flags;
+    rom_buffer[address >> (address_bits - rom_bits)] = data;
   }
 
   fwrite(rom_buffer, sizeof(uint8_t), rom_size, tgt_file);
