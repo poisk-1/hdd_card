@@ -24,6 +24,8 @@ ctrl_request_scan: equ 0x02
 ctrl_request_reset: equ 0x03
 ctrl_request_read: equ 0x04
 ctrl_request_write: equ 0x05
+ctrl_request_verify: equ 0x06
+ctrl_request_format: equ 0x07
 
 io_segment: equ 0xe000
 io_data_size: equ 0x200
@@ -112,15 +114,17 @@ entry:
 	mov byte al, [io_ctrl_scan_req.number_of_floppy_drives]
 	mov byte ah, [io_ctrl_scan_req.number_of_hard_drives]
 
-	cmp al, 1
-	jl .done_scanning
-	DisplayString `Floppy drive A: found\r\n`
+	push ax
 
-	cmp al, 2
-	jl .done_scanning
-	DisplayString `Floppy drive B: found\r\n`
+	call display_byte
+	DisplayString ` floppy drive(s) found\r\n`
 
-.done_scanning:
+	mov al, ah
+	call display_byte
+	DisplayString ` hard drive(s) found\r\n`
+
+	pop ax
+
 	DisplayString `Installing INT 13h...\r\n`
 
 	call install_ipl_diskette
@@ -153,23 +157,30 @@ int13h:
 	mov di, io_segment
 	mov ds, di ; DS to point to IO memory
 
-	cmp ah, 0x3
-	jg .return_error
+	cmp ah, 0x4
+	jg .unsupported
 
 	mov di, ax
 	xor al, al
 	xchg al, ah
 	shl ax, 1
 	xchg ax, di
-	add di, .table
+	add di, .dispatch
 
 	jmp [cs:di]
+
+.unsupported:
+	mov al, ah
+	call display_byte
+	DisplayString `!!!\r\n`
+	jmp .return_error
 	
-.table:
+.dispatch:
 	dw .reset
-	dw .get_status
+	dw .read_status
 	dw .read
 	dw .write
+	dw .verify
 
 	; DL - drive number
 	; Returns:
@@ -188,7 +199,7 @@ int13h:
 
 	; Returns:
 	; AH - status
-.get_status:
+.read_status:
 	call get_status
 
 	jmp .return_success
@@ -287,6 +298,42 @@ int13h:
 
 .write_error:
 	sub bl, al ; some sectors read
+	mov al, bl
+
+	jne .return_error
+
+	; AL - number of sectors to verify
+	; CH, CL, DH, DL - CSHD address of first sector
+	;
+	; Returns:
+	; AH - status
+.verify:
+
+	mov byte [io_ctrl_drive_req.cylinder_number], ch
+	mov byte [io_ctrl_drive_req.sector_number], cl
+	mov byte [io_ctrl_drive_req.head_number], dh
+	mov byte [io_ctrl_drive_req.drive_number], dl
+
+	mov bl, al ; save number of sectors to verify
+
+.verify_next_sector:
+	SubmitIo ctrl_request_verify
+	mov byte ah, [io_ctrl_drive_req.status]
+
+	call set_status
+
+	cmp ah, 0 ; has verification error occured?
+	jne .verify_error
+
+	dec al
+	jnz .verify_next_sector
+
+	mov al, bl ; all sectors verified
+
+	jmp .return_success
+
+.verify_error:
+	sub bl, al ; some sectors verified
 	mov al, bl
 
 	jne .return_error
@@ -396,6 +443,34 @@ delay:
 	nop
 	loop .continue
 	pop cx
+	ret
+
+	; Byte in AL
+display_byte:
+	push cx
+	push ax
+	mov cl, 4
+	shr al, cl
+	call display_nibble
+	pop ax
+	push ax
+	and al, 0x0f
+	call display_nibble
+	pop ax
+	pop cx
+	ret
+
+	; 4 LSB in AL
+display_nibble:
+	push ax
+	and al, 0x0f
+	cmp al, 0x09
+	jle .is_digit
+	add al, 0x07
+.is_digit:
+	add al, 0x30
+	call display_char
+	pop ax
 	ret
 
 	; String address in DS:SI

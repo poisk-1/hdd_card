@@ -101,6 +101,8 @@ enum Request {
     REQUEST_RESET = 0x3,
     REQUEST_READ = 0x4,
     REQUEST_WRITE = 0x5,
+    REQUEST_VERIFY = 0x6,
+    REQUEST_FOMRAT = 0x7,
 };
 
 enum Status {
@@ -212,8 +214,6 @@ void main(void) {
 
     while (1) {
         if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
-            printf("MOUNTED\r\n");
-
             memset(&floppy_drives, 0, sizeof (struct Drive) * MAX_NUMBER_FLOPPY_DRIVES);
             memset(&hard_drives, 0, sizeof (struct Drive) * MAX_NUMBER_HARD_DRIVES);
 
@@ -229,129 +229,144 @@ void main(void) {
                 }
             }
 
+            printf("MOUNTED\r\n");
+
             while (SD_SPI_IsMediaPresent()) {
-                struct Drive* drive = NULL;
-                
-                switch (ctrl->request) {
-                    case REQUEST_CHECK:
-                        LED_SetLow();
+                if (ctrl->request != REQUEST_DONE) {
+                    LED_SetLow();
 
-                        printf("CHECK\r\n");
+                    struct Drive* drive = NULL;
 
-                        for (size_t i = 0; i < DATA_BUFFER_SIZE; i++) {
-                            data_buffer[i] = ~data_buffer[i];
-                        }
+                    switch (ctrl->request) {
+                        case REQUEST_CHECK:
+                            printf("CHECK\r\n");
 
-                        ctrl->request = REQUEST_DONE;
-
-                        LED_SetHigh();
-
-                        break;
-                    case REQUEST_SCAN:
-                        LED_SetLow();
-
-                        printf("SCAN\r\n");
-                        
-                        memset(&ctrl->req.scan_req, 0, sizeof(struct ScanReq));
-
-                        for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                            if (floppy_drives[i].file_name) {
-                                ctrl->req.scan_req.number_of_floppy_drives++;
+                            for (size_t i = 0; i < DATA_BUFFER_SIZE; i++) {
+                                data_buffer[i] = ~data_buffer[i];
                             }
-                        }
 
-                        for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                            if (hard_drives[i].file_name) {
-                                ctrl->req.scan_req.number_of_hard_drives++;
+                            break;
+
+                        case REQUEST_SCAN:
+                            printf("SCAN\r\n");
+
+                            memset(&ctrl->req.scan_req, 0, sizeof (struct ScanReq));
+
+                            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                                if (floppy_drives[i].file_name) {
+                                    ctrl->req.scan_req.number_of_floppy_drives++;
+                                }
                             }
-                        }
 
-                        ctrl->request = REQUEST_DONE;
+                            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                                if (hard_drives[i].file_name) {
+                                    ctrl->req.scan_req.number_of_hard_drives++;
+                                }
+                            }
 
-                        LED_SetHigh();
+                            break;
 
-                        break;
-                    case REQUEST_RESET:
-                        LED_SetLow();
+                        case REQUEST_RESET:
+                            printf("RESET[d=%d]\r\n", ctrl->req.drive_req.drive_number);
 
-                        printf("RESET\r\n");
+                            drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                        drive = find_drive(ctrl->req.drive_req.drive_number);
+                            if (drive) {
+                                ctrl->req.drive_req.status = (
+                                        f_open(&floppy_file, drive->file_name, FA_READ) == FR_OK &&
+                                        f_close(&floppy_file) == FR_OK) ? 0 : STATUS_RESET_FAILED;
+                            } else {
+                                ctrl->req.drive_req.status = STATUS_RESET_FAILED;
+                            }
 
-                        if (drive) {
-                            ctrl->req.drive_req.status = (
-                                    f_open(&floppy_file, drive->file_name, FA_READ) == FR_OK &&
-                                    f_close(&floppy_file) == FR_OK) ? 0 : STATUS_RESET_FAILED;
-                        } else {
-                            ctrl->req.drive_req.status = STATUS_RESET_FAILED;
-                        }
+                            break;
 
-                        ctrl->request = REQUEST_DONE;
+                        case REQUEST_READ:
+                            printf(
+                                    "READ[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                    ctrl->req.drive_req.drive_number,
+                                    ctrl->req.drive_req.cylinder_number,
+                                    ctrl->req.drive_req.head_number,
+                                    ctrl->req.drive_req.sector_number
+                                    );
 
-                        LED_SetHigh();
+                            drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                        break;
-                    case REQUEST_READ:
-                        LED_SetLow();
+                            if (drive) {
+                                UINT read_bytes = 0;
+                                ctrl->req.drive_req.status = (
+                                        f_open(&floppy_file, drive->file_name, FA_READ) == FR_OK &&
+                                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_read(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
+                                        f_close(&floppy_file) == FR_OK &&
+                                        read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
-                        printf(
-                                "READ[d=%d,c=%d,h=%d,s=%d]\r\n",
-                                ctrl->req.drive_req.drive_number,
-                                ctrl->req.drive_req.cylinder_number,
-                                ctrl->req.drive_req.head_number,
-                                ctrl->req.drive_req.sector_number
-                                );
+                                ctrl->req.drive_req.sector_number++;
+                            } else {
+                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                            }
 
-                        drive = find_drive(ctrl->req.drive_req.drive_number);
+                            break;
 
-                        if (drive) {
-                            UINT read_bytes = 0;
-                            ctrl->req.drive_req.status = (
-                                    f_open(&floppy_file, drive->file_name, FA_READ) == FR_OK &&
-                                    f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
-                                    f_read(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
-                                    f_close(&floppy_file) == FR_OK &&
-                                    read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+                        case REQUEST_WRITE:
+                            printf(
+                                    "WRITE[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                    ctrl->req.drive_req.drive_number,
+                                    ctrl->req.drive_req.cylinder_number,
+                                    ctrl->req.drive_req.head_number,
+                                    ctrl->req.drive_req.sector_number
+                                    );
 
-                            ctrl->req.drive_req.sector_number++;
-                            ctrl->request = REQUEST_DONE;
-                        } else {
-                            ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
-                        }
+                            drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                        LED_SetHigh();
-                        break;
+                            if (drive) {
+                                UINT written_bytes = 0;
+                                ctrl->req.drive_req.status = (
+                                        f_open(&floppy_file, drive->file_name, FA_WRITE) == FR_OK &&
+                                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_write(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
+                                        f_close(&floppy_file) == FR_OK &&
+                                        written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
-                    case REQUEST_WRITE:
-                        LED_SetLow();
+                                ctrl->req.drive_req.sector_number++;
+                            } else {
+                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                            }
 
-                        printf(
-                                "WRITE[d=%d,c=%d,h=%d,s=%d]\r\n",
-                                ctrl->req.drive_req.drive_number,
-                                ctrl->req.drive_req.cylinder_number,
-                                ctrl->req.drive_req.head_number,
-                                ctrl->req.drive_req.sector_number
-                                );
+                            break;
 
-                        drive = find_drive(ctrl->req.drive_req.drive_number);
+                        case REQUEST_VERIFY:
+                            printf(
+                                    "VERIFY[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                    ctrl->req.drive_req.drive_number,
+                                    ctrl->req.drive_req.cylinder_number,
+                                    ctrl->req.drive_req.head_number,
+                                    ctrl->req.drive_req.sector_number
+                                    );
 
-                        if (drive) {
-                            UINT written_bytes = 0;
-                            ctrl->req.drive_req.status = (
-                                    f_open(&floppy_file, drive->file_name, FA_WRITE) == FR_OK &&
-                                    f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
-                                    f_write(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
-                                    f_close(&floppy_file) == FR_OK &&
-                                    written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+                            drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                            ctrl->req.drive_req.sector_number++;
-                            ctrl->request = REQUEST_DONE;
-                        } else {
-                            ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
-                        }
+                            if (drive) {
+                                ctrl->req.drive_req.status = (
+                                        f_open(&floppy_file, drive->file_name, FA_WRITE) == FR_OK &&
+                                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_close(&floppy_file) == FR_OK) ? 0 : STATUS_BAD_SECTOR;
 
-                        LED_SetHigh();
-                        break;
+                                ctrl->req.drive_req.sector_number++;
+                            } else {
+                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                            }
+
+                            break;
+
+                        default:
+                            printf("UNKNOWN REQUEST %d\r\n", ctrl->request);
+
+                            break;
+                    }
+
+                    ctrl->request = REQUEST_DONE;
+                    LED_SetHigh();
                 }
             }
 
