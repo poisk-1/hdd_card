@@ -8,10 +8,14 @@ org 0
 
 	__SECT__
 
+	push ds
 	push si
+	mov si, cs
+	mov ds, si
 	mov si, %%str
 	call display_string
 	pop si
+	pop ds
 %endmacro
 
 %macro SubmitIo 1
@@ -25,9 +29,10 @@ org 0
 %endmacro
 
 ctrl_request_done: equ 0x00
-ctrl_request_init: equ 0x01
-ctrl_request_read: equ 0x02
-ctrl_request_write: equ 0x03
+ctrl_request_check: equ 0x01
+ctrl_request_reset: equ 0x02
+ctrl_request_read: equ 0x03
+ctrl_request_write: equ 0x04
 
 io_segment: equ 0xe000
 
@@ -50,27 +55,64 @@ section .text
 	db 0x55, 0xaa ; BIOS marker
 	db 0 ; BIOS size / 512 bytes
 
+entry:
 	push ax
 	push bx
 	push cx
 	push dx
+	push si
+	push di
 	push ds
-
-	mov ax, cs
-	mov ds, ax
+	push es
 
 	call cls
 
 	DisplayString `Poisk HDD card version 0.1\r\n`
 	DisplayString `Copyright (c) 2022 Peter Hizalev\r\n`
 
+	mov ax, io_segment
+	mov ds, ax ; DS to point to IO memory
+	mov es, ax ; ES to point to IO memory
+
+	mov cx, io_data_size_bytes
+	sub di, di
+
+.fill:
+	mov ax, io_data_size_bytes
+	sub ax, cx
+	stosb
+	loop .fill
+
+	SubmitIo ctrl_request_check
+
+	mov cx, io_data_size_bytes
+	sub si, si
+
+.check:
+	mov bx, io_data_size_bytes
+	sub bx, cx
+	lodsb
+	not al
+	cmp al, bl
+	jne .check_failed
+	loop .check
+
 	call install_ipl_diskette
 	call install_int13h
 
+	jmp .check_succeeded
+
+.check_failed
+	DisplayString `Adapter error!\r\n`
+
+.check_succeeded
 	call delay
 	call cls
 
+	pop es
 	pop ds
+	pop di
+	pop si
 	pop dx
 	pop cx
 	pop bx
@@ -111,7 +153,7 @@ int13h:
 	; Returns:
 	; AH - status
 .reset:
-	SubmitIo ctrl_request_init
+	SubmitIo ctrl_request_reset
 
 	call set_status
 

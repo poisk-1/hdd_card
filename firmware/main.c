@@ -95,9 +95,10 @@ void handle_write(void) {
 
 enum Request {
     REQUEST_DONE = 0,
-    REQUEST_RESET = 0x1,
-    REQUEST_READ = 0x2,
-    REQUEST_WRITE = 0x3,
+    REQUEST_CHECK = 0x1,
+    REQUEST_RESET = 0x2,
+    REQUEST_READ = 0x3,
+    REQUEST_WRITE = 0x4,
 };
 
 enum Status {
@@ -167,6 +168,21 @@ void main(void) {
 
             while (SD_SPI_IsMediaPresent()) {
                 switch (ctrl->request) {
+                    case REQUEST_CHECK:
+                        LED_SetLow();
+
+                        printf("CHECK\r\n");
+
+                        for (size_t i = 0; i < DATA_BUFFER_SIZE; i++) {
+                            data_buffer[i] = ~data_buffer[i];
+                        }
+
+                        ctrl->status = 0;
+                        ctrl->request = REQUEST_DONE;
+
+                        LED_SetHigh();
+
+                        break;
                     case REQUEST_RESET:
                         LED_SetLow();
 
