@@ -18,37 +18,40 @@ org 0
 	pop ds
 %endmacro
 
-%macro SubmitIo 1
-	mov byte [io.ctrl.request], %1
-
-%%wait:
-	cmp byte [io.ctrl.request], ctrl_request_done
-	jne %%wait
-
-	mov byte ah, [io.ctrl.status]
-%endmacro
-
 ctrl_request_done: equ 0x00
 ctrl_request_check: equ 0x01
-ctrl_request_reset: equ 0x02
-ctrl_request_read: equ 0x03
-ctrl_request_write: equ 0x04
+ctrl_request_scan: equ 0x02
+ctrl_request_reset: equ 0x03
+ctrl_request_read: equ 0x04
+ctrl_request_write: equ 0x05
 
 io_segment: equ 0xe000
+io_data_size: equ 0x200
 
-io_data_size_bytes: equ 0x200
-
-struc io
-	.data: resb io_data_size_bytes
-
-	.ctrl.request resb 1
-	.ctrl.status resb 1
-
-	.ctrl.cylinder_number resb 1
-	.ctrl.sector_number resb 1
-	.ctrl.head_number resb 1
-	.ctrl.drive_number resb 1
+struc io_ctrl, io_data_size
+	.request resb 1
 endstruc
+
+struc io_ctrl_drive_req, (io_data_size + io_ctrl_size)
+	.status resb 1
+	.cylinder_number resb 1
+	.sector_number resb 1
+	.head_number resb 1
+	.drive_number resb 1
+endstruc
+
+struc io_ctrl_scan_req, (io_data_size + io_ctrl_size)
+	.number_of_floppy_drives resb 1
+	.number_of_hard_drives resb 1
+endstruc
+
+%macro SubmitIo 1
+	mov byte [io_ctrl.request], %1
+
+%%wait:
+	cmp byte [io_ctrl.request], ctrl_request_done
+	jne %%wait
+%endmacro
 
 section .text
 
@@ -68,46 +71,64 @@ entry:
 	call cls
 
 	DisplayString `Poisk HDD card version 0.1\r\n`
-	DisplayString `Copyright (c) 2022 Peter Hizalev\r\n`
+	DisplayString `Copyright (c) 2022 Peter Hizalev\r\n\r\n`
 
 	mov ax, io_segment
 	mov ds, ax ; DS to point to IO memory
 	mov es, ax ; ES to point to IO memory
 
-	mov cx, io_data_size_bytes
+	mov cx, io_data_size
 	sub di, di
 
 .fill:
-	mov ax, io_data_size_bytes
+	mov ax, io_data_size
 	sub ax, cx
 	stosb
 	loop .fill
 
 	SubmitIo ctrl_request_check
 
-	mov cx, io_data_size_bytes
+	mov cx, io_data_size
 	sub si, si
 
 .check:
-	mov bx, io_data_size_bytes
+	mov bx, io_data_size
 	sub bx, cx
 	lodsb
 	not al
 	cmp al, bl
 	jne .check_failed
 	loop .check
+	jmp .check_succeeded
+
+.check_failed:
+	DisplayString `Adapter failure!\r\n`
+	jmp .done
+
+.check_succeeded:
+	DisplayString `Adapter found\r\nScanning drives...\r\n`
+
+	SubmitIo ctrl_request_scan
+	mov byte al, [io_ctrl_scan_req.number_of_floppy_drives]
+	mov byte ah, [io_ctrl_scan_req.number_of_hard_drives]
+
+	cmp al, 1
+	jl .done_scanning
+	DisplayString `Floppy drive A: found\r\n`
+
+	cmp al, 2
+	jl .done_scanning
+	DisplayString `Floppy drive B: found\r\n`
+
+.done_scanning:
+	DisplayString `Installing INT 13h...\r\n`
 
 	call install_ipl_diskette
 	call install_int13h
 
-	jmp .check_succeeded
-
-.check_failed
-	DisplayString `Adapter error!\r\n`
-
-.check_succeeded
-	call delay
-	call cls
+.done:
+	;call delay
+	;call cls
 
 	pop es
 	pop ds
@@ -150,10 +171,14 @@ int13h:
 	dw .read
 	dw .write
 
+	; DL - drive number
 	; Returns:
 	; AH - status
 .reset:
+	mov byte [io_ctrl_drive_req.drive_number], dl
+
 	SubmitIo ctrl_request_reset
+	mov byte ah, [io_ctrl_drive_req.status]
 
 	call set_status
 
@@ -178,10 +203,10 @@ int13h:
 
 	mov di, bx ; make DI point to the beginning of the read buffer
 
-	mov byte [io.ctrl.cylinder_number], ch
-	mov byte [io.ctrl.sector_number], cl
-	mov byte [io.ctrl.head_number], dh
-	mov byte [io.ctrl.drive_number], dl
+	mov byte [io_ctrl_drive_req.cylinder_number], ch
+	mov byte [io_ctrl_drive_req.sector_number], cl
+	mov byte [io_ctrl_drive_req.head_number], dh
+	mov byte [io_ctrl_drive_req.drive_number], dl
 
 	mov bl, al ; save number of sectors to read
 
@@ -189,13 +214,14 @@ int13h:
 	sub si, si ; make SI to point to the beginning of the IO buffer
 
 	SubmitIo ctrl_request_read
+	mov byte ah, [io_ctrl_drive_req.status]
 
 	call set_status
 
 	cmp ah, 0 ; has read error occured?
 	jne .read_error
 
-	mov cx, io_data_size_bytes
+	mov cx, io_data_size
 	rep movsb ; copy data bytes from IO buffer (DS:SI) to read buffer (ES:DI)
 
 	dec al
@@ -220,17 +246,17 @@ int13h:
 .write:
 	mov si, bx ; make SI point to the beginning of the write buffer
 
-	mov byte [io.ctrl.cylinder_number], ch
-	mov byte [io.ctrl.sector_number], cl
-	mov byte [io.ctrl.head_number], dh
-	mov byte [io.ctrl.drive_number], dl
+	mov byte [io_ctrl_drive_req.cylinder_number], ch
+	mov byte [io_ctrl_drive_req.sector_number], cl
+	mov byte [io_ctrl_drive_req.head_number], dh
+	mov byte [io_ctrl_drive_req.drive_number], dl
 
 	mov bl, al ; save number of sectors to write
 
 .write_next_sector:
 	sub di, di ; make DI to point to the beginning of the IO buffer
 
-	mov cx, io_data_size_bytes
+	mov cx, io_data_size
 
 	push es
 	push ds
@@ -245,6 +271,7 @@ int13h:
 	pop ds ; swap DS and ES
 
 	SubmitIo ctrl_request_write
+	mov byte ah, [io_ctrl_drive_req.status]
 
 	call set_status
 
@@ -307,14 +334,33 @@ get_status:
 	pop ds
 	ret
 
+	; AL - number of floppy drives
+	; AH - number of hard drives
 install_ipl_diskette:
 	push ds
 	push ax
-	mov ax, 0x40
-	mov ds, ax
-	mov ax, [0x10]
-	or ax, 0x1
-	mov [0x10], ax
+	push bx
+	push cx
+
+	mov bx, 0x40
+	mov ds, bx	
+
+	mov cl, 6
+	shl al, cl ; number of floppy drives in bits 7-6
+
+	mov bx, [0x10]
+	and bl, 0x3f
+	or bl, al
+
+	cmp al, 0
+	je .no_boot
+	or bl, 0x1 ; boot from floppy in bit 0
+
+.no_boot:
+	mov [0x10], bx
+
+	pop cx
+	pop bx
 	pop ax
 	pop ds
 	ret

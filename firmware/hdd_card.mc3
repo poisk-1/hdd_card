@@ -707,7 +707,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_MINIMIZE"/>
-         <value>2</value>
+         <value>0</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="FatFs" name="FF_FS_NORTC"/>
@@ -8925,7 +8925,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files/fatfs/ffconf.h</file>
-         <hash>85d1f920ceffbf33e79f88f462cd54ded1c71daf50cf73986be1235a429057ad</hash>
+         <hash>3401d3af9b570edc8f21d08968f7c20bdb8050e9bf179baa1bb6923fe648845f</hash>
       </entry>
       <entry>
          <file>main.c</file>
