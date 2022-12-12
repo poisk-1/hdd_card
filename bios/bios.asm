@@ -18,14 +18,14 @@ org 0
 	pop ds
 %endmacro
 
-ctrl_request_done: equ 0x00
-ctrl_request_check: equ 0x01
-ctrl_request_scan: equ 0x02
-ctrl_request_reset: equ 0x03
-ctrl_request_read: equ 0x04
-ctrl_request_write: equ 0x05
-ctrl_request_verify: equ 0x06
-ctrl_request_format: equ 0x07
+ctrl_request_done:               equ 0x00
+ctrl_request_check:              equ 0x01
+ctrl_request_scan:               equ 0x02
+ctrl_request_reset:              equ 0x03
+ctrl_request_read:               equ 0x04
+ctrl_request_write:              equ 0x05
+ctrl_request_read_params_fun8h:  equ 0x06
+ctrl_request_read_params_fun15h: equ 0x07
 
 io_segment: equ 0xe000
 io_data_size: equ 0x200
@@ -34,7 +34,9 @@ struc io_ctrl, io_data_size
 	.request resb 1
 endstruc
 
-struc io_ctrl_drive_req, (io_data_size + io_ctrl_size)
+io_ctrl_req_offset: equ io_data_size + io_ctrl_size
+
+struc io_ctrl_drive_req, io_ctrl_req_offset
 	.status resb 1
 	.cylinder_number resb 1
 	.sector_number resb 1
@@ -42,9 +44,29 @@ struc io_ctrl_drive_req, (io_data_size + io_ctrl_size)
 	.drive_number resb 1
 endstruc
 
-struc io_ctrl_scan_req, (io_data_size + io_ctrl_size)
+struc io_ctrl_scan_req, io_ctrl_req_offset
 	.number_of_floppy_drives resb 1
 	.number_of_hard_drives resb 1
+endstruc
+
+struc io_ctrl_read_params_fun8h_req, io_ctrl_req_offset
+    .drive_number resb 1
+
+    .success resb 1
+
+    .drive_type resb 1
+    .max_cylinder_number resb 1
+    .max_sector_number resb 1
+    .max_head_number resb 1
+    .number_of_drives resb 1
+endstruc
+
+struc io_ctrl_read_params_fun15h_req, io_ctrl_req_offset
+    .drive_number resb 1
+
+    .success resb 1
+
+    .drive_type resb 1
 endstruc
 
 %macro SubmitIo 1
@@ -108,7 +130,7 @@ entry:
 	jmp .done
 
 .check_succeeded:
-	DisplayString `Adapter found\r\nScanning drives...\r\n`
+	DisplayString `Adapter success\r\nScanning drives...\r\n`
 
 	SubmitIo ctrl_request_scan
 	mov byte al, [io_ctrl_scan_req.number_of_floppy_drives]
@@ -117,17 +139,17 @@ entry:
 	push ax
 
 	call display_byte
-	DisplayString ` floppy drive(s) found\r\n`
+	DisplayString ` floppy drive(s) success\r\n`
 
 	mov al, ah
 	call display_byte
-	DisplayString ` hard drive(s) found\r\n`
+	DisplayString ` hard drive(s) success\r\n`
 
 	pop ax
 
 	DisplayString `Installing INT 13h...\r\n`
 
-	call install_ipl_diskette
+	call install_bios_data
 	call install_int13h
 
 .done:
@@ -148,24 +170,28 @@ int13h:
 	pushf
 	sti
 	cld
-	push ds
+	push ds	
 	push bx
 	push cx
+	push dx
 	push di
 	push si
 
 	mov di, io_segment
 	mov ds, di ; DS to point to IO memory
 
-	cmp ah, 0x4
+	cmp ah, 0x1f
 	jg .unsupported
 
 	mov di, ax
 	xor al, al
 	xchg al, ah
 	shl ax, 1
-	xchg ax, di
+	xchg ax, di	
 	add di, .dispatch
+
+	cmp word [cs:di], 0
+	je .unsupported
 
 	jmp [cs:di]
 
@@ -176,11 +202,38 @@ int13h:
 	jmp .return_error
 	
 .dispatch:
-	dw .reset
-	dw .read_status
-	dw .read
-	dw .write
-	dw .verify
+	dw .reset                 ; 0
+	dw .read_status	          ; 1
+	dw .read                  ; 2
+	dw .write                 ; 3
+	dw .verify                ; 4
+	dw .format                ; 5
+	dw 0                      ; 6
+	dw 0                      ; 7
+	dw .read_params_fun8h     ; 8
+	dw 0                      ; 9
+	dw 0                      ; a
+	dw 0                      ; b
+	dw 0                      ; c
+	dw 0                      ; d
+	dw 0                      ; e
+	dw 0                      ; f
+	dw 0                      ; 10
+	dw 0                      ; 11
+	dw 0                      ; 12
+	dw 0                      ; 13
+	dw 0                      ; 14
+	dw .read_params_fun15h    ; 15
+	dw .detect_media_change   ; 16
+	dw .set_diskette_type     ; 17
+	dw .set_media_type        ; 18
+	dw 0                      ; 19
+	dw 0                      ; 1a
+	dw 0                      ; 1b
+	dw 0                      ; 1c
+	dw 0                      ; 1d
+	dw 0                      ; 1e
+	dw 0                      ; 1f
 
 	; DL - drive number
 	; Returns:
@@ -246,7 +299,7 @@ int13h:
 	sub bl, al ; some sectors read
 	mov al, bl
 
-	jne .return_error
+	jmp .return_error
 
 	; AL - number of sectors to write
 	; CH, CL, DH, DL - CSHD address of first sector
@@ -300,49 +353,89 @@ int13h:
 	sub bl, al ; some sectors read
 	mov al, bl
 
-	jne .return_error
+	jmp .return_error
 
-	; AL - number of sectors to verify
-	; CH, CL, DH, DL - CSHD address of first sector
-	;
-	; Returns:
-	; AH - status
 .verify:
-
-	mov byte [io_ctrl_drive_req.cylinder_number], ch
-	mov byte [io_ctrl_drive_req.sector_number], cl
-	mov byte [io_ctrl_drive_req.head_number], dh
-	mov byte [io_ctrl_drive_req.drive_number], dl
-
-	mov bl, al ; save number of sectors to verify
-
-.verify_next_sector:
-	SubmitIo ctrl_request_verify
-	mov byte ah, [io_ctrl_drive_req.status]
-
+	mov ah, 0
 	call set_status
-
-	cmp ah, 0 ; has verification error occured?
-	jne .verify_error
-
-	dec al
-	jnz .verify_next_sector
-
-	mov al, bl ; all sectors verified
-
 	jmp .return_success
 
-.verify_error:
-	sub bl, al ; some sectors verified
-	mov al, bl
+.format:
+	mov ah, 0
+	call set_status
+	jmp .return_success
 
-	jne .return_error
+	; DL - drive number
+	; Returns:
+	; AX - 0
+	; BH - 0
+	; BL, CH, CL, DH - drive info
+	; DL - number of drives
+.read_params_fun8h:
+	mov byte [io_ctrl_read_params_fun8h_req.drive_number], dl
+
+	SubmitIo ctrl_request_read_params_fun8h
+
+	pop si
+	pop di
+	pop dx
+	pop cx
+	pop bx
+
+	mov ax, 0
+	mov bh, 0
+	mov byte bl, [io_ctrl_read_params_fun8h_req.drive_type]
+	mov byte ch, [io_ctrl_read_params_fun8h_req.max_cylinder_number]
+	mov byte cl, [io_ctrl_read_params_fun8h_req.max_sector_number]
+	mov byte dh, [io_ctrl_read_params_fun8h_req.max_head_number]
+	mov byte dl, [io_ctrl_read_params_fun8h_req.number_of_drives]
+
+	cmp byte [io_ctrl_read_params_fun8h_req.success], 0
+	jne .return_success_and_registers
+	jmp .return_error_and_registers
+
+	; DL - drive number
+	; Returns:
+	; AH - drive type
+.read_params_fun15h:
+	mov byte [io_ctrl_read_params_fun15h_req.drive_number], dl
+
+	SubmitIo ctrl_request_read_params_fun15h
+
+	pop si
+	pop di
+	pop dx
+	pop cx
+	pop bx
+
+	mov byte ah, [io_ctrl_read_params_fun15h_req.drive_type]
+
+	cmp byte [io_ctrl_read_params_fun15h_req.success], 0
+	jne .return_success_and_registers
+	jmp .return_error_and_registers
+
+.detect_media_change:
+	mov ah, 0
+	call set_status
+	jmp .return_success
+
+.set_diskette_type:
+	mov ah, 0
+	call set_status
+	jmp .return_success
+
+.set_media_type:
+	mov ah, 0
+	call set_status
+	jmp .return_success
 
 .return_success:
 	pop si
 	pop di
+	pop dx
 	pop cx
 	pop bx
+.return_success_and_registers:
 	pop ds
 	popf
 	clc
@@ -351,9 +444,11 @@ int13h:
 .return_error:
 	pop si
 	pop di
+	pop dx
 	pop cx
+	pop bx
+.return_error_and_registers:
 	pop ds
-	pop bp
 	popf
 	stc
 	retf 2	
@@ -383,7 +478,7 @@ get_status:
 
 	; AL - number of floppy drives
 	; AH - number of hard drives
-install_ipl_diskette:
+install_bios_data:
 	push ds
 	push ax
 	push bx
@@ -392,8 +487,9 @@ install_ipl_diskette:
 	mov bx, 0x40
 	mov ds, bx	
 
+	dec al
 	mov cl, 6
-	shl al, cl ; number of floppy drives in bits 7-6
+	shl al, cl ; number of floppy drives minus one in bits 7-6
 
 	mov bx, [0x10]
 	and bl, 0x3f
