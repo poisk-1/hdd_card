@@ -171,7 +171,7 @@ enum DriveTypeFun15h {
 };
 
 struct Drive {
-    const char* file_name;
+    FIL file;
 
     uint8_t drive_type_fun8h;
     uint8_t drive_type_fun15h;
@@ -200,6 +200,10 @@ bool is_hard_drive(uint8_t drive_number) {
     return drive_number & 0x80;
 }
 
+bool is_valid_drive(struct Drive* drive) {
+    return drive->number_of_sectors;
+}
+
 struct Drive* find_drive(uint8_t drive_number) {
     struct Drive* drive = NULL;
     size_t i = drive_number & 0xf;
@@ -210,11 +214,7 @@ struct Drive* find_drive(uint8_t drive_number) {
         drive = &floppy_drives[i];
     }
 
-    if (drive && drive->file_name) {
-        return drive;
-    }
-
-    return NULL;
+    return drive;
 }
 
 uint32_t chs_to_lba_sector_number(struct Drive* drive, struct DriveReq* disk_req) {
@@ -228,7 +228,6 @@ void putch(char c) {
 }
 
 static FATFS fs;
-static FIL floppy_file;
 static FILINFO file_info;
 
 /*
@@ -270,14 +269,14 @@ void main(void) {
                 if (f_stat(floppy_file_names[i], &file_info) == FR_OK) {
                     switch (file_info.fsize) {
                         case FLOPPY_1440_SIZE_BYTES:
-                            floppy_drives[i].file_name = floppy_file_names[i];
+                            if (f_open(&floppy_drives[i].file, floppy_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
+                                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
+                                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
 
-                            floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
-                            floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                            floppy_drives[i].number_of_heads = FLOPPY_1440_NUMBER_OF_HEADS;
-                            floppy_drives[i].number_of_sectors = FLOPPY_1440_NUMBER_OF_SECTORS;
-                            floppy_drives[i].number_of_cylinders = FLOPPY_1440_NUMBER_OF_CYLINDERS;
+                                floppy_drives[i].number_of_heads = FLOPPY_1440_NUMBER_OF_HEADS;
+                                floppy_drives[i].number_of_sectors = FLOPPY_1440_NUMBER_OF_SECTORS;
+                                floppy_drives[i].number_of_cylinders = FLOPPY_1440_NUMBER_OF_CYLINDERS;
+                            }
                     }
                 }
             }
@@ -308,7 +307,7 @@ void main(void) {
                             ctrl->req.scan_req.number_of_floppy_drives = 0;
 
                             for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                                if (floppy_drives[i].file_name) {
+                                if (is_valid_drive(&floppy_drives[i])) {
                                     ctrl->req.scan_req.number_of_floppy_drives++;
                                 }
                             }
@@ -316,7 +315,7 @@ void main(void) {
                             ctrl->req.scan_req.number_of_hard_drives = 0;
 
                             for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                                if (hard_drives[i].file_name) {
+                                if (is_valid_drive(&hard_drives[i])) {
                                     ctrl->req.scan_req.number_of_hard_drives++;
                                 }
                             }
@@ -328,10 +327,8 @@ void main(void) {
 
                             drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                            if (drive) {
-                                ctrl->req.drive_req.status = (
-                                        f_open(&floppy_file, drive->file_name, FA_READ) == FR_OK &&
-                                        f_close(&floppy_file) == FR_OK) ? 0 : STATUS_RESET_FAILED;
+                            if (drive && is_valid_drive(drive)) {
+                                ctrl->req.drive_req.status = 0;
                             } else {
                                 ctrl->req.drive_req.status = STATUS_RESET_FAILED;
                             }
@@ -349,13 +346,11 @@ void main(void) {
 
                             drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                            if (drive) {
+                            if (drive && is_valid_drive(drive)) {
                                 UINT read_bytes = 0;
                                 ctrl->req.drive_req.status = (
-                                        f_open(&floppy_file, drive->file_name, FA_READ) == FR_OK &&
-                                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
-                                        f_read(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
-                                        f_close(&floppy_file) == FR_OK &&
+                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_read(&drive->file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
                                         read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
                                 ctrl->req.drive_req.sector_number++;
@@ -376,13 +371,11 @@ void main(void) {
 
                             drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                            if (drive) {
+                            if (drive && is_valid_drive(drive)) {
                                 UINT written_bytes = 0;
                                 ctrl->req.drive_req.status = (
-                                        f_open(&floppy_file, drive->file_name, FA_WRITE) == FR_OK &&
-                                        f_lseek(&floppy_file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
-                                        f_write(&floppy_file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
-                                        f_close(&floppy_file) == FR_OK &&
+                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_write(&drive->file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
                                         written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
                                 ctrl->req.drive_req.sector_number++;
@@ -402,13 +395,13 @@ void main(void) {
 
                             if (is_hard_drive(ctrl->req.read_params_fun8h_req.drive_number)) {
                                 for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                                    if (hard_drives[i].file_name) {
+                                    if (is_valid_drive(&hard_drives[i])) {
                                         ctrl->req.read_params_fun8h_req.number_of_drives++;
                                     }
                                 }
                             } else {
                                 for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                                    if (floppy_drives[i].file_name) {
+                                    if (is_valid_drive(&floppy_drives[i])) {
                                         ctrl->req.read_params_fun8h_req.number_of_drives++;
                                     }
                                 }
@@ -416,7 +409,7 @@ void main(void) {
 
                             drive = find_drive(ctrl->req.read_params_fun8h_req.drive_number);
 
-                            if (drive) {
+                            if (drive && is_valid_drive(drive)) {
                                 ctrl->req.read_params_fun8h_req.success = 1;
                                 ctrl->req.read_params_fun8h_req.drive_type = drive->drive_type_fun8h;
                                 ctrl->req.read_params_fun8h_req.max_cylinder_number = (uint8_t) drive->number_of_cylinders - 1;
@@ -440,7 +433,7 @@ void main(void) {
 
                             drive = find_drive(ctrl->req.read_params_fun15h_req.drive_number);
 
-                            if (drive) {
+                            if (drive && is_valid_drive(drive)) {
                                 ctrl->req.read_params_fun15h_req.success = 1;
                                 ctrl->req.read_params_fun15h_req.drive_type = drive->drive_type_fun15h;
                             } else {
@@ -458,6 +451,18 @@ void main(void) {
 
                     ctrl->request = REQUEST_DONE;
                     LED_SetHigh();
+                }
+            }
+
+            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                if (is_valid_drive(&floppy_drives[i])) {
+                    f_close(&floppy_drives[i].file);
+                }
+            }
+
+            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                if (is_valid_drive(&hard_drives[i])) {
+                    f_close(&hard_drives[i].file);
                 }
             }
 
