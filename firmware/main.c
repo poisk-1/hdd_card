@@ -101,8 +101,9 @@ enum Request {
     REQUEST_RESET = 0x3,
     REQUEST_READ = 0x4,
     REQUEST_WRITE = 0x5,
-    REQUEST_READ_PARAMS_FUN8H = 0x6,
-    REQUEST_READ_PARAMS_FUN15H = 0x7,
+    REQUEST_VERIFY = 0x6,
+    REQUEST_READ_PARAMS_FUN8H = 0x7,
+    REQUEST_READ_PARAMS_FUN15H = 0x8,
 };
 
 enum Status {
@@ -115,8 +116,8 @@ enum Status {
 struct DriveReq {
     uint8_t status;
 
-    uint8_t cylinder_number;
-    uint8_t sector_number;
+    uint8_t low_cylinder_number;
+    uint8_t sector_and_high_cylinder_numbers;
     uint8_t head_number;
     uint8_t drive_number;
 };
@@ -132,8 +133,8 @@ struct ReadParamsFun8hReq {
     uint8_t success;
 
     uint8_t drive_type;
-    uint8_t max_cylinder_number;
-    uint8_t max_sector_number;
+    uint8_t max_low_cylinder_number;
+    uint8_t max_sector_and_high_cylinder_numbers;
     uint8_t max_head_number;
     uint8_t number_of_drives;
 };
@@ -196,12 +197,19 @@ struct Drive hard_drives[MAX_NUMBER_HARD_DRIVES];
 #define FLOPPY_1440_NUMBER_OF_CYLINDERS 80
 #define FLOPPY_1440_SIZE_BYTES ((FSIZE_t)FLOPPY_1440_NUMBER_OF_HEADS * FLOPPY_1440_NUMBER_OF_SECTORS * FLOPPY_1440_NUMBER_OF_CYLINDERS * FLOPPY_1440_SECTOR_SIZE_BYTES)
 
+#define HARD_SECTOR_SIZE_BYTES 512
+#define HARD_NUMBER_OF_HEADS 16
+#define HARD_NUMBER_OF_SECTORS 63
+#define HARD_CYLINDER_SECTORS ((FSIZE_t)HARD_NUMBER_OF_HEADS * (FSIZE_t)HARD_NUMBER_OF_SECTORS)
+#define HARD_CYLINDER_SIZE_BYTES ((FSIZE_t)HARD_SECTOR_SIZE_BYTES * HARD_CYLINDER_SECTORS)
+#define HARD_MAX_NUMBER_OF_CYLINDERS 1024
+
 bool is_hard_drive(uint8_t drive_number) {
     return drive_number & 0x80;
 }
 
 bool is_valid_drive(struct Drive* drive) {
-    return drive->number_of_sectors;
+    return drive->number_of_cylinders;
 }
 
 struct Drive* find_drive(uint8_t drive_number) {
@@ -217,10 +225,40 @@ struct Drive* find_drive(uint8_t drive_number) {
     return drive;
 }
 
-uint32_t chs_to_lba_sector_number(struct Drive* drive, struct DriveReq* disk_req) {
-    return ((uint32_t) disk_req->cylinder_number * drive->number_of_heads +
-            (uint32_t) disk_req->head_number) * drive->number_of_sectors +
-            ((uint32_t) disk_req->sector_number - 1);
+#define HIGH_CYLINDER_BITS 2
+#define HIGH_CYLINDER_NUMBER_MASK ((uint8_t)0xc0)
+#define SECTOR_NUMBER_MASK ((uint8_t)~HIGH_CYLINDER_NUMBER_MASK)
+
+bool chs_to_lba(struct Drive* drive, struct DriveReq* disk_req, uint32_t *lba) {
+    uint32_t cylinder_number =
+            (uint32_t) disk_req->low_cylinder_number |
+            (((uint32_t) disk_req->sector_and_high_cylinder_numbers & HIGH_CYLINDER_NUMBER_MASK) << HIGH_CYLINDER_BITS);
+
+    uint32_t sector_number =
+            (uint32_t) disk_req->sector_and_high_cylinder_numbers & SECTOR_NUMBER_MASK;
+
+    if (cylinder_number < drive->number_of_cylinders &&
+            disk_req->head_number < drive->number_of_heads &&
+            sector_number <= drive->number_of_sectors) {
+        *lba = ((uint32_t) cylinder_number * drive->number_of_heads +
+                (uint32_t) disk_req->head_number) * drive->number_of_sectors +
+                ((uint32_t) sector_number - 1);
+
+        return true;
+    }
+
+    return false;
+}
+
+void set_params_fun8h(struct Drive* drive, struct ReadParamsFun8hReq* req) {
+    req->success = 1;
+    req->drive_type = drive->drive_type_fun8h;
+    req->max_low_cylinder_number = (uint8_t) ((drive->number_of_cylinders - 1) & 0xff);
+    req->max_head_number = (uint8_t) drive->number_of_heads - 1;
+    req->max_sector_and_high_cylinder_numbers =
+            (uint8_t) (drive->number_of_sectors & SECTOR_NUMBER_MASK) |
+            (uint8_t) (((drive->number_of_cylinders - 1) >> HIGH_CYLINDER_BITS) & HIGH_CYLINDER_NUMBER_MASK);
+
 }
 
 void putch(char c) {
@@ -281,18 +319,40 @@ void main(void) {
                 }
             }
 
+            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                if (f_stat(hard_file_names[i], &file_info) == FR_OK) {
+                    FSIZE_t size = file_info.fsize;
+
+                    if (size > HARD_CYLINDER_SIZE_BYTES && f_open(&hard_drives[i].file, hard_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
+                        hard_drives[i].drive_type_fun8h = 0;
+                        hard_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
+
+                        hard_drives[i].number_of_heads = HARD_NUMBER_OF_HEADS;
+                        hard_drives[i].number_of_sectors = HARD_NUMBER_OF_SECTORS;
+                        hard_drives[i].number_of_cylinders = size / HARD_CYLINDER_SIZE_BYTES;
+
+                        if (hard_drives[i].number_of_cylinders > HARD_MAX_NUMBER_OF_CYLINDERS)
+                            hard_drives[i].number_of_cylinders = HARD_MAX_NUMBER_OF_CYLINDERS;
+                    }
+                }
+            }
+
+#ifdef LOG
             printf("MOUNTED\r\n");
+#endif
 
             while (SD_SPI_IsMediaPresent()) {
                 if (ctrl->request != REQUEST_DONE) {
                     LED_SetLow();
 
                     struct Drive* drive = NULL;
+                    uint32_t lba = 0;
 
                     switch (ctrl->request) {
                         case REQUEST_CHECK:
+#ifdef LOG
                             printf("CHECK\r\n");
-
+#endif
                             for (size_t i = 0; i < DATA_BUFFER_SIZE; i++) {
                                 data_buffer[i] = ~data_buffer[i];
                             }
@@ -300,8 +360,9 @@ void main(void) {
                             break;
 
                         case REQUEST_SCAN:
+#ifdef LOG
                             printf("SCAN\r\n");
-
+#endif
                             memset(&ctrl->req.scan_req, 0, sizeof (struct ScanReq));
 
                             ctrl->req.scan_req.number_of_floppy_drives = 0;
@@ -323,8 +384,9 @@ void main(void) {
                             break;
 
                         case REQUEST_RESET:
+#ifdef LOG
                             printf("RESET[d=%d]\r\n", ctrl->req.drive_req.drive_number);
-
+#endif
                             drive = find_drive(ctrl->req.drive_req.drive_number);
 
                             if (drive && is_valid_drive(drive)) {
@@ -336,24 +398,25 @@ void main(void) {
                             break;
 
                         case REQUEST_READ:
+#ifdef LOG
                             printf(
-                                    "READ[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                    "READ[d=%d,lc=%d,h=%d,shc=%d]\r\n",
                                     ctrl->req.drive_req.drive_number,
-                                    ctrl->req.drive_req.cylinder_number,
+                                    ctrl->req.drive_req.low_cylinder_number,
                                     ctrl->req.drive_req.head_number,
-                                    ctrl->req.drive_req.sector_number
+                                    ctrl->req.drive_req.sector_and_high_cylinder_numbers
                                     );
-
+#endif
                             drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                            if (drive && is_valid_drive(drive)) {
+                            if (drive && is_valid_drive(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
                                 UINT read_bytes = 0;
                                 ctrl->req.drive_req.status = (
-                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
                                         f_read(&drive->file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
                                         read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
-                                ctrl->req.drive_req.sector_number++;
+                                ctrl->req.drive_req.sector_and_high_cylinder_numbers++;
                             } else {
                                 ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
                             }
@@ -361,24 +424,46 @@ void main(void) {
                             break;
 
                         case REQUEST_WRITE:
+#ifdef LOG
                             printf(
-                                    "WRITE[d=%d,c=%d,h=%d,s=%d]\r\n",
+                                    "WRITE[d=%d,lc=%d,h=%d,shc=%d]\r\n",
                                     ctrl->req.drive_req.drive_number,
-                                    ctrl->req.drive_req.cylinder_number,
+                                    ctrl->req.drive_req.low_cylinder_number,
                                     ctrl->req.drive_req.head_number,
-                                    ctrl->req.drive_req.sector_number
+                                    ctrl->req.drive_req.sector_and_high_cylinder_numbers
                                     );
-
+#endif
                             drive = find_drive(ctrl->req.drive_req.drive_number);
 
-                            if (drive && is_valid_drive(drive)) {
+                            if (drive && is_valid_drive(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
                                 UINT written_bytes = 0;
                                 ctrl->req.drive_req.status = (
-                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * chs_to_lba_sector_number(drive, &ctrl->req.drive_req)) == FR_OK &&
+                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
                                         f_write(&drive->file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
                                         written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
-                                ctrl->req.drive_req.sector_number++;
+                                ctrl->req.drive_req.sector_and_high_cylinder_numbers++;
+                            } else {
+                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                            }
+
+                            break;
+
+                        case REQUEST_VERIFY:
+#ifdef LOG
+                            printf(
+                                    "VERIFY[d=%d,lc=%d,h=%d,shc=%d]\r\n",
+                                    ctrl->req.drive_req.drive_number,
+                                    ctrl->req.drive_req.low_cylinder_number,
+                                    ctrl->req.drive_req.head_number,
+                                    ctrl->req.drive_req.sector_and_high_cylinder_numbers
+                                    );
+#endif
+                            drive = find_drive(ctrl->req.drive_req.drive_number);
+
+                            if (drive && is_valid_drive(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
+                                ctrl->req.drive_req.status = 0;
+                                ctrl->req.drive_req.sector_and_high_cylinder_numbers++;
                             } else {
                                 ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
                             }
@@ -386,11 +471,12 @@ void main(void) {
                             break;
 
                         case REQUEST_READ_PARAMS_FUN8H:
+#ifdef LOG
                             printf(
                                     "REQUEST_READ_PARAMS_FUN8H[d=%d]\r\n",
                                     ctrl->req.read_params_fun8h_req.drive_number
                                     );
-
+#endif
                             ctrl->req.read_params_fun8h_req.number_of_drives = 0;
 
                             if (is_hard_drive(ctrl->req.read_params_fun8h_req.drive_number)) {
@@ -410,27 +496,24 @@ void main(void) {
                             drive = find_drive(ctrl->req.read_params_fun8h_req.drive_number);
 
                             if (drive && is_valid_drive(drive)) {
-                                ctrl->req.read_params_fun8h_req.success = 1;
-                                ctrl->req.read_params_fun8h_req.drive_type = drive->drive_type_fun8h;
-                                ctrl->req.read_params_fun8h_req.max_cylinder_number = (uint8_t) drive->number_of_cylinders - 1;
-                                ctrl->req.read_params_fun8h_req.max_head_number = (uint8_t) drive->number_of_heads - 1;
-                                ctrl->req.read_params_fun8h_req.max_sector_number = (uint8_t) drive->number_of_sectors;
+                                set_params_fun8h(drive, &ctrl->req.read_params_fun8h_req);
                             } else {
                                 ctrl->req.read_params_fun8h_req.success = 0;
                                 ctrl->req.read_params_fun8h_req.drive_type = 0;
-                                ctrl->req.read_params_fun8h_req.max_cylinder_number = 0;
+                                ctrl->req.read_params_fun8h_req.max_low_cylinder_number = 0;
                                 ctrl->req.read_params_fun8h_req.max_head_number = 0;
-                                ctrl->req.read_params_fun8h_req.max_sector_number = 0;
+                                ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers = 0;
                             }
 
                             break;
 
                         case REQUEST_READ_PARAMS_FUN15H:
+#ifdef LOG
                             printf(
                                     "REQUEST_READ_PARAMS_FUN15H[d=%d]\r\n",
                                     ctrl->req.read_params_fun15h_req.drive_number
                                     );
-
+#endif
                             drive = find_drive(ctrl->req.read_params_fun15h_req.drive_number);
 
                             if (drive && is_valid_drive(drive)) {
@@ -444,8 +527,9 @@ void main(void) {
                             break;
 
                         default:
+#ifdef LOG
                             printf("UNKNOWN REQUEST %d\r\n", ctrl->request);
-
+#endif
                             break;
                     }
 
@@ -468,7 +552,9 @@ void main(void) {
 
             f_mount(0, "0:", 0);
 
+#ifdef LOG
             printf("UNMOUNTED\r\n");
+#endif            
         } else {
             if (ctrl->request) {
                 ctrl->req.drive_req.status = STATUS_RESET_FAILED;

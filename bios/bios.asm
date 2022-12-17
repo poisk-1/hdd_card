@@ -24,8 +24,9 @@ ctrl_request_scan:               equ 0x02
 ctrl_request_reset:              equ 0x03
 ctrl_request_read:               equ 0x04
 ctrl_request_write:              equ 0x05
-ctrl_request_read_params_fun8h:  equ 0x06
-ctrl_request_read_params_fun15h: equ 0x07
+ctrl_request_verify:             equ 0x06
+ctrl_request_read_params_fun8h:  equ 0x07
+ctrl_request_read_params_fun15h: equ 0x08
 
 io_segment: equ 0xe000
 io_data_size: equ 0x200
@@ -38,8 +39,8 @@ io_ctrl_req_offset: equ io_data_size + io_ctrl_size
 
 struc io_ctrl_drive_req, io_ctrl_req_offset
 	.status resb 1
-	.cylinder_number resb 1
-	.sector_number resb 1
+	.low_cylinder_number resb 1
+	.sector_and_high_cylinder_numbers resb 1
 	.head_number resb 1
 	.drive_number resb 1
 endstruc
@@ -55,8 +56,8 @@ struc io_ctrl_read_params_fun8h_req, io_ctrl_req_offset
     .success resb 1
 
     .drive_type resb 1
-    .max_cylinder_number resb 1
-    .max_sector_number resb 1
+    .max_low_cylinder_number resb 1
+    .max_sector_and_high_cylinder_numbers resb 1
     .max_head_number resb 1
     .number_of_drives resb 1
 endstruc
@@ -199,6 +200,10 @@ int13h:
 	mov al, ah
 	call display_byte
 	DisplayString `!!!\r\n`
+
+	mov ah, 0x1 ; invalid function
+	call set_status
+
 	jmp .return_error
 	
 .dispatch:
@@ -267,8 +272,8 @@ int13h:
 
 	mov di, bx ; make DI point to the beginning of the read buffer
 
-	mov byte [io_ctrl_drive_req.cylinder_number], ch
-	mov byte [io_ctrl_drive_req.sector_number], cl
+	mov byte [io_ctrl_drive_req.low_cylinder_number], ch
+	mov byte [io_ctrl_drive_req.sector_and_high_cylinder_numbers], cl
 	mov byte [io_ctrl_drive_req.head_number], dh
 	mov byte [io_ctrl_drive_req.drive_number], dl
 
@@ -310,8 +315,8 @@ int13h:
 .write:
 	mov si, bx ; make SI point to the beginning of the write buffer
 
-	mov byte [io_ctrl_drive_req.cylinder_number], ch
-	mov byte [io_ctrl_drive_req.sector_number], cl
+	mov byte [io_ctrl_drive_req.low_cylinder_number], ch
+	mov byte [io_ctrl_drive_req.sector_and_high_cylinder_numbers], cl
 	mov byte [io_ctrl_drive_req.head_number], dh
 	mov byte [io_ctrl_drive_req.drive_number], dl
 
@@ -356,9 +361,34 @@ int13h:
 	jmp .return_error
 
 .verify:
-	mov ah, 0
+	mov byte [io_ctrl_drive_req.low_cylinder_number], ch
+	mov byte [io_ctrl_drive_req.sector_and_high_cylinder_numbers], cl
+	mov byte [io_ctrl_drive_req.head_number], dh
+	mov byte [io_ctrl_drive_req.drive_number], dl
+
+	mov bl, al ; save number of sectors to verify
+
+.verify_next_sector:
+	SubmitIo ctrl_request_verify
+	mov byte ah, [io_ctrl_drive_req.status]
+
 	call set_status
+
+	cmp ah, 0 ; has verification error occured?
+	jne .verify_error
+
+	dec al
+	jnz .verify_next_sector
+
+	mov al, bl ; all sectors verified
+
 	jmp .return_success
+
+.verify_error:
+	sub bl, al ; some sectors verified
+	mov al, bl
+
+	jmp .return_error
 
 .format:
 	mov ah, 0
@@ -385,8 +415,8 @@ int13h:
 	mov ax, 0
 	mov bh, 0
 	mov byte bl, [io_ctrl_read_params_fun8h_req.drive_type]
-	mov byte ch, [io_ctrl_read_params_fun8h_req.max_cylinder_number]
-	mov byte cl, [io_ctrl_read_params_fun8h_req.max_sector_number]
+	mov byte ch, [io_ctrl_read_params_fun8h_req.max_low_cylinder_number]
+	mov byte cl, [io_ctrl_read_params_fun8h_req.max_sector_and_high_cylinder_numbers]
 	mov byte dh, [io_ctrl_read_params_fun8h_req.max_head_number]
 	mov byte dl, [io_ctrl_read_params_fun8h_req.number_of_drives]
 
@@ -486,6 +516,8 @@ install_bios_data:
 
 	mov bx, 0x40
 	mov ds, bx	
+
+	mov [0x75], ah ; number of hard drives
 
 	dec al
 	mov cl, 6
