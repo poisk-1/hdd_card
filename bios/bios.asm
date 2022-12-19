@@ -34,6 +34,11 @@ org 0
 	pop ax
 %endmacro
 
+boot_sector_offset equ 0x7c00
+boot_sector_size equ 0x200
+boot_sector_signature_offset equ (boot_sector_offset + boot_sector_size - 2)
+boot_sector_signature equ 0xaa55
+
 ctrl_request_done:               equ 0x00
 ctrl_request_check:              equ 0x01
 ctrl_request_scan:               equ 0x02
@@ -144,6 +149,7 @@ entry:
 
 .check_failed:
 	DisplayString `Adapter failure!\r\n`
+	call delay
 	jmp .done
 
 .check_succeeded:
@@ -169,9 +175,6 @@ entry:
 	InstallISR 0x13, int13h
 
 .done:
-	;call delay
-	;call cls
-
 	pop es
 	pop ds
 	pop di
@@ -559,7 +562,7 @@ int19h:
 
 	mov ax, 0
 	mov es, ax
-	mov bx, 0x7c00 ; boot sector at [ES:BX] = [0000:7c00]
+	mov bx, boot_sector_offset ; boot sector at [ES:BX] = [0000:7c00]
 
 	mov ah, [0x10] ; boot from floppy in bit 0
 	test ah, 1
@@ -569,7 +572,7 @@ int19h:
 	call .read_boot_sector
 	jc .try_second_floppy_drive
 
-	cmp word [es:0x7DFE], 0xaa55
+	cmp word [es:boot_sector_signature_offset], boot_sector_signature
 	je .boot
 
 .try_second_floppy_drive:
@@ -577,7 +580,7 @@ int19h:
 	call .read_boot_sector
 	jc .try_hard_drive
 
-	cmp word [es:0x7DFE], 0xaa55
+	cmp word [es:boot_sector_signature_offset], boot_sector_signature
 	je .boot
 
 .try_hard_drive:
@@ -589,10 +592,13 @@ int19h:
 	call .read_boot_sector
 	jc .no_boot
 
-	cmp word [es:0x7DFE], 0xaa55
+	cmp word [es:boot_sector_signature_offset], boot_sector_signature
 	je .boot
 
 .no_boot:
+	DisplayString `Bootable disk not found!\r\n`
+	call delay
+
 	pop cx	
 	pop bx
 	pop ax
@@ -602,6 +608,8 @@ int19h:
 	retf 2
 
 .boot:
+	DisplayString `Booting operating system ...\r\n\r\n`
+
 	jmp 0:0x7c00
 
 	; DL - drive number
