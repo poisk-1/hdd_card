@@ -215,7 +215,7 @@ bool is_hard_drive(uint8_t drive_number) {
     return drive_number & 0x80;
 }
 
-bool is_valid_drive(struct Drive* drive) {
+bool is_valid_drive(const struct Drive* drive) {
     return drive->number_of_cylinders;
 }
 
@@ -236,7 +236,7 @@ struct Drive* find_drive(uint8_t drive_number) {
 #define HIGH_CYLINDER_NUMBER_MASK ((uint8_t)0xc0)
 #define SECTOR_NUMBER_MASK ((uint8_t)~HIGH_CYLINDER_NUMBER_MASK)
 
-bool chs_to_lba(struct Drive* drive, struct DriveReq* disk_req, uint32_t *lba) {
+bool chs_to_lba(const struct Drive* drive, const struct DriveReq* disk_req, uint32_t *lba) {
     uint32_t cylinder_number =
             (uint32_t) disk_req->low_cylinder_number |
             (((uint32_t) disk_req->sector_and_high_cylinder_numbers & HIGH_CYLINDER_NUMBER_MASK) << HIGH_CYLINDER_BITS);
@@ -257,7 +257,7 @@ bool chs_to_lba(struct Drive* drive, struct DriveReq* disk_req, uint32_t *lba) {
     return false;
 }
 
-void next_drive_req(struct Drive* drive, struct DriveReq* disk_req) {
+void next_drive_req(const struct Drive* drive, struct DriveReq* disk_req) {
     uint32_t cylinder_number =
             (uint32_t) disk_req->low_cylinder_number |
             (((uint32_t) disk_req->sector_and_high_cylinder_numbers & HIGH_CYLINDER_NUMBER_MASK) << HIGH_CYLINDER_BITS);
@@ -291,7 +291,7 @@ void next_drive_req(struct Drive* drive, struct DriveReq* disk_req) {
             (uint8_t) ((cylinder_number >> HIGH_CYLINDER_BITS) & HIGH_CYLINDER_NUMBER_MASK);
 }
 
-void set_params_fun8h(struct Drive* drive, struct ReadParamsFun8hReq* req) {
+void set_params_fun8h(const struct Drive* drive, struct ReadParamsFun8hReq* req) {
     req->success = 1;
     req->drive_type = drive->drive_type_fun8h;
     req->max_low_cylinder_number = (uint8_t) ((drive->number_of_cylinders - 1) & 0xff);
