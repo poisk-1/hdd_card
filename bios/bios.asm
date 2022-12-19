@@ -18,6 +18,22 @@ org 0
 	pop ds
 %endmacro
 
+%macro InstallISR 2
+	push ax
+	push bx
+	push ds
+
+	xor ax, ax
+	mov ds, ax
+
+	mov word [%1 * 4], %2
+	mov [%1 * 4 + 2], cs
+
+	pop ds
+	pop bx
+	pop ax
+%endmacro
+
 ctrl_request_done:               equ 0x00
 ctrl_request_check:              equ 0x01
 ctrl_request_scan:               equ 0x02
@@ -140,18 +156,17 @@ entry:
 	push ax
 
 	call display_byte
-	DisplayString ` floppy drive(s) success\r\n`
+	DisplayString ` floppy drive(s) found\r\n`
 
 	mov al, ah
 	call display_byte
-	DisplayString ` hard drive(s) success\r\n`
+	DisplayString ` hard drive(s) found\r\n`
 
 	pop ax
 
-	DisplayString `Installing INT 13h...\r\n`
-
 	call install_bios_data
-	call install_int13h
+	InstallISR 0x19, int19h
+	InstallISR 0x13, int13h
 
 .done:
 	;call delay
@@ -506,7 +521,6 @@ get_status:
 	pop ds
 	ret
 
-	; AL - number of floppy drives
 	; AH - number of hard drives
 install_bios_data:
 	push ds
@@ -519,19 +533,9 @@ install_bios_data:
 
 	mov [0x75], ah ; number of hard drives
 
-	dec al
-	mov cl, 6
-	shl al, cl ; number of floppy drives minus one in bits 7-6
-
 	mov bx, [0x10]
 	and bl, 0x3f
-	or bl, al
-
-	cmp al, 0
-	je .no_boot
-	or bl, 0x1 ; boot from floppy in bit 0
-
-.no_boot:
+	or bl, 0x41 ; 2 floppy drives (01) in bits 7-6 and boot from floppy in bit 0
 	mov [0x10], bx
 
 	pop cx
@@ -540,20 +544,88 @@ install_bios_data:
 	pop ds
 	ret
 
-install_int13h:
+int19h:
+	pushf
+	push ds
+	push es
 	push ax
 	push bx
-	push ds
+	push cx
+	sti
+	cld	
 
-	xor ax, ax
+	mov ax, 0x40
 	mov ds, ax
 
-	mov word [0x13 * 4], int13h
-	mov [0x13 * 4 + 2], cs
+	mov ax, 0
+	mov es, ax
+	mov bx, 0x7c00 ; boot sector at [ES:BX] = [0000:7c00]
 
-	pop ds
+	mov ah, [0x10] ; boot from floppy in bit 0
+	test ah, 1
+	jz .try_hard_drive
+
+	mov dl, 0 ; boot from 1st floppy drive
+	call .read_boot_sector
+	jc .try_second_floppy_drive
+
+	cmp word [es:0x7DFE], 0xaa55
+	je .boot
+
+.try_second_floppy_drive:
+	mov dl, 1 ; boot from 2nd floppy drive
+	call .read_boot_sector
+	jc .try_hard_drive
+
+	cmp word [es:0x7DFE], 0xaa55
+	je .boot
+
+.try_hard_drive:
+	mov ah, [0x75] ; number of hard drives
+	cmp ah, 0
+	je .no_boot
+
+	mov dl, 0x80 ; boot from 1st hard drive
+	call .read_boot_sector
+	jc .no_boot
+
+	cmp word [es:0x7DFE], 0xaa55
+	je .boot
+
+.no_boot:
+	pop cx	
 	pop bx
 	pop ax
+	pop es
+	pop ds
+	popf
+	retf 2
+
+.boot:
+	jmp 0:0x7c00
+
+	; DL - drive number
+	; ES:BX - memory location
+.read_boot_sector:
+	mov cx, 4 ; number of retries
+.retry_read:
+	push cx
+
+	mov ah, 0 ; reset drive
+	int 0x13
+	jc .reset_error
+
+	mov ah, 2 ; read sector
+	mov cx, 1 ; track 0, sector 1
+	mov dh, 0 ; head 0
+	mov al, 1 ; read 1 sector
+	int 0x13
+
+.reset_error:
+	pop cx
+	jnc .return_success
+	loop .retry_read
+.return_success:
 	ret
 
 delay:
