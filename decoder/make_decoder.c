@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
       data = (~(1 << sel_io_bit) & 0xf0) | ((address >> 8) & 0xf);
     }
     else if (address >= bios_base && address < (bios_base + bios_size)) {
-      data = (~(1 << sel_bios_bit) & 0xf0) | ((address >> 8) & 0xf);
+      data = (~(1 << sel_bios_bit) & 0xff);
     }
 
     rom_buffer[address >> (address_bits - rom_bits)] = data;
