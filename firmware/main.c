@@ -358,7 +358,7 @@ void main(void) {
                             break;
                         case FLOPPY_720_SIZE_BYTES:
                             if (f_open(&floppy_drives[i].file, floppy_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
-                                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
+                                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_720;
                                 floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
 
                                 floppy_drives[i].number_of_heads = FLOPPY_720_NUMBER_OF_HEADS;
