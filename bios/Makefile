@@ -1,6 +1,6 @@
 src = bios.asm
-part = AT28C256
-rom_size_kb = 32
+part = AT28C64
+rom_size_kb = 8
 
 .PHONY: all
 all: bios.rom
