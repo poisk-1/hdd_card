@@ -230,14 +230,14 @@ int13h:
 	dw .read                  ; 2
 	dw .write                 ; 3
 	dw .verify                ; 4
-	dw .format                ; 5
+	dw .empty                 ; 5 (format)
 	dw 0                      ; 6
 	dw 0                      ; 7
 	dw .read_params_fun8h     ; 8
 	dw 0                      ; 9
 	dw 0                      ; a
 	dw 0                      ; b
-	dw 0                      ; c
+	dw .empty                 ; c (seek)
 	dw 0                      ; d
 	dw 0                      ; e
 	dw 0                      ; f
@@ -247,9 +247,9 @@ int13h:
 	dw 0                      ; 13
 	dw 0                      ; 14
 	dw .read_params_fun15h    ; 15
-	dw .detect_media_change   ; 16
-	dw .set_diskette_type     ; 17
-	dw .set_media_type        ; 18
+	dw .empty                 ; 16 (detect media change)
+	dw .empty                 ; 17 (set diskette type)
+	dw .empty                 ; 18 (set media type)
 	dw 0                      ; 19
 	dw 0                      ; 1a
 	dw 0                      ; 1b
@@ -408,7 +408,7 @@ int13h:
 
 	jmp .return_error
 
-.format:
+.empty:
 	mov ah, 0
 	call set_status
 	jmp .return_success
@@ -461,21 +461,6 @@ int13h:
 	cmp byte [io_ctrl_read_params_fun15h_req.success], 0
 	jne .return_success_and_registers
 	jmp .return_error_and_registers
-
-.detect_media_change:
-	mov ah, 0
-	call set_status
-	jmp .return_success
-
-.set_diskette_type:
-	mov ah, 0
-	call set_status
-	jmp .return_success
-
-.set_media_type:
-	mov ah, 0
-	call set_status
-	jmp .return_success
 
 .return_success:
 	pop si
