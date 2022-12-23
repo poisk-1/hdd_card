@@ -194,7 +194,7 @@ struct Drive {
 #define MAX_NUMBER_HARD_DRIVES 2
 
 const char* floppy_image_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.IMG", "FLOPPY1.IMG", "FLOPPY2.IMG", "FLOPPY3.IMG"};
-const char* floppy_info_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.INF", "FLOPPY1.INF", "FLOPPY2.INF", "FLOPPY3.INF"};
+const char* floppy_info_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.TXT", "FLOPPY1.TXT", "FLOPPY2.TXT", "FLOPPY3.TXT"};
 const char* floppy_ro_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.RO", "FLOPPY1.RO", "FLOPPY2.RO", "FLOPPY3.RO"};
 const char* hard_image_file_names[MAX_NUMBER_HARD_DRIVES] = {"HARD0.IMG", "HARD1.IMG"};
 
@@ -205,14 +205,47 @@ struct Drive hard_drives[MAX_NUMBER_HARD_DRIVES];
 #define FLOPPY_1440_NUMBER_OF_HEADS 2
 #define FLOPPY_1440_NUMBER_OF_SECTORS 18
 #define FLOPPY_1440_NUMBER_OF_CYLINDERS 80
-#define FLOPPY_1440_SIZE_BYTES ((FSIZE_t)FLOPPY_1440_NUMBER_OF_HEADS * FLOPPY_1440_NUMBER_OF_SECTORS * FLOPPY_1440_NUMBER_OF_CYLINDERS * FLOPPY_1440_SECTOR_SIZE_BYTES)
+#define FLOPPY_1440_SIZE_BYTES ((FSIZE_t)\
+    FLOPPY_1440_NUMBER_OF_HEADS * \
+    FLOPPY_1440_NUMBER_OF_SECTORS * \
+    FLOPPY_1440_NUMBER_OF_CYLINDERS * \
+    FLOPPY_1440_SECTOR_SIZE_BYTES)
 
 #define FLOPPY_720_SECTOR_SIZE_BYTES 512
 #define FLOPPY_720_NUMBER_OF_HEADS 2
 #define FLOPPY_720_NUMBER_OF_SECTORS 18
 #define FLOPPY_720_NUMBER_OF_CYLINDERS 40
-#define FLOPPY_720_SIZE_BYTES ((FSIZE_t)FLOPPY_720_NUMBER_OF_HEADS * FLOPPY_720_NUMBER_OF_SECTORS * FLOPPY_720_NUMBER_OF_CYLINDERS * FLOPPY_720_SECTOR_SIZE_BYTES)
+#define FLOPPY_720_SIZE_BYTES ((FSIZE_t)\
+    FLOPPY_720_NUMBER_OF_HEADS * \
+    FLOPPY_720_NUMBER_OF_SECTORS * \
+    FLOPPY_720_NUMBER_OF_CYLINDERS * \
+    FLOPPY_720_SECTOR_SIZE_BYTES)
 
+#define FLOPPY_1200_SECTOR_SIZE_BYTES 512
+#define FLOPPY_1200_NUMBER_OF_HEADS 2
+#define FLOPPY_1200_NUMBER_OF_SECTORS 15
+#define FLOPPY_1200_NUMBER_OF_CYLINDERS 80
+#define FLOPPY_1200_SIZE_BYTES ((FSIZE_t)\
+    FLOPPY_1200_NUMBER_OF_HEADS * \
+    FLOPPY_1200_NUMBER_OF_SECTORS * \
+    FLOPPY_1200_NUMBER_OF_CYLINDERS * \
+    FLOPPY_1200_SECTOR_SIZE_BYTES)
+
+#define FLOPPY_360_SECTOR_SIZE_BYTES 512
+#define FLOPPY_360_NUMBER_OF_HEADS 2
+#define FLOPPY_360_NUMBER_OF_SECTORS 9
+#define FLOPPY_360_NUMBER_OF_CYLINDERS 40
+#define FLOPPY_360_SIZE_BYTES ((FSIZE_t)\
+    FLOPPY_360_NUMBER_OF_HEADS * \
+    FLOPPY_360_NUMBER_OF_SECTORS * \
+    FLOPPY_360_NUMBER_OF_CYLINDERS * \
+    FLOPPY_360_SECTOR_SIZE_BYTES)
+
+#define FLOPPY_INFO_TYPE_LENGTH 4
+#define FLOPPY_INFO_TYPE_1440 "1440"
+#define FLOPPY_INFO_TYPE_720 "0720"
+#define FLOPPY_INFO_TYPE_1200 "1200"
+#define FLOPPY_INFO_TYPE_360 "0360"
 
 #define HARD_SECTOR_SIZE_BYTES 512
 #define HARD_NUMBER_OF_HEADS 16
@@ -351,10 +384,6 @@ void main(void) {
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
 
-#define FLOPPY_INFO_TYPE_LENGTH 4
-#define FLOPPY_INFO_TYPE_1440 "1440"
-#define FLOPPY_INFO_TYPE_720 "0720"
-
     while (1) {
         if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
             memset(&floppy_drives, 0, sizeof (struct Drive) * MAX_NUMBER_FLOPPY_DRIVES);
@@ -385,6 +414,20 @@ void main(void) {
                         floppy_drives[i].number_of_heads = FLOPPY_720_NUMBER_OF_HEADS;
                         floppy_drives[i].number_of_sectors = FLOPPY_720_NUMBER_OF_SECTORS;
                         floppy_drives[i].number_of_cylinders = FLOPPY_720_NUMBER_OF_CYLINDERS;
+                    } else if (strncmp(info, FLOPPY_INFO_TYPE_1200, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1200;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                        floppy_drives[i].number_of_heads = FLOPPY_1200_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_1200_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_1200_NUMBER_OF_CYLINDERS;
+                    } else if (strncmp(info, FLOPPY_INFO_TYPE_360, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                        floppy_drives[i].number_of_heads = FLOPPY_360_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_360_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_360_NUMBER_OF_CYLINDERS;
                     }
 
 #ifdef DEBUG
@@ -410,6 +453,16 @@ void main(void) {
                             break;
                         case FLOPPY_720_SIZE_BYTES:
                             if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_720) {
+                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
+                            }
+                            break;
+                        case FLOPPY_1200_SIZE_BYTES:
+                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_1200) {
+                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
+                            }
+                            break;
+                        case FLOPPY_360_SIZE_BYTES:
+                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_360) {
                                 f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
                             }
                             break;
