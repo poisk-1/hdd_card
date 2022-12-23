@@ -109,6 +109,7 @@ enum Request {
 enum DriveReqStatus {
     STATUS_NO_ERROR = 0,
     STATUS_BAD_SECTOR = 0x2,
+    STATUS_WRITE_PROTECTED = 0x3,
     STATUS_CONTROLLER_FAILED = 0x20
 };
 
@@ -177,7 +178,9 @@ enum DriveTypeFun15h {
 };
 
 struct Drive {
-    FIL file;
+    FIL image_file;
+
+    bool read_only;
 
     uint8_t drive_type_fun8h;
     uint8_t drive_type_fun15h;
@@ -187,11 +190,13 @@ struct Drive {
     size_t number_of_cylinders;
 };
 
-#define MAX_NUMBER_FLOPPY_DRIVES 2
+#define MAX_NUMBER_FLOPPY_DRIVES 4
 #define MAX_NUMBER_HARD_DRIVES 2
 
-const char* floppy_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.IMG", "FLOPPY1.IMG"};
-const char* hard_file_names[MAX_NUMBER_HARD_DRIVES] = {"HARD0.IMG", "HARD1.IMG"};
+const char* floppy_image_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.IMG", "FLOPPY1.IMG", "FLOPPY2.IMG", "FLOPPY3.IMG"};
+const char* floppy_info_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.INF", "FLOPPY1.INF", "FLOPPY2.INF", "FLOPPY3.INF"};
+const char* floppy_ro_file_names[MAX_NUMBER_FLOPPY_DRIVES] = {"FLOPPY0.RO", "FLOPPY1.RO", "FLOPPY2.RO", "FLOPPY3.RO"};
+const char* hard_image_file_names[MAX_NUMBER_HARD_DRIVES] = {"HARD0.IMG", "HARD1.IMG"};
 
 struct Drive floppy_drives[MAX_NUMBER_FLOPPY_DRIVES];
 struct Drive hard_drives[MAX_NUMBER_HARD_DRIVES];
@@ -220,8 +225,12 @@ bool is_hard_drive(uint8_t drive_number) {
     return drive_number & 0x80;
 }
 
-bool is_valid_drive(const struct Drive* drive) {
-    return drive->number_of_cylinders;
+bool has_geometry(const struct Drive* drive) {
+    return drive->number_of_cylinders != 0;
+}
+
+bool has_image(const struct Drive* drive) {
+    return drive->image_file.obj.fs != NULL;
 }
 
 struct Drive* find_drive(uint8_t drive_number) {
@@ -311,7 +320,6 @@ void putch(char c) {
 }
 
 static FATFS fs;
-static FILINFO file_info;
 
 /*
                          Main application
@@ -343,54 +351,87 @@ void main(void) {
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
 
+#define FLOPPY_INFO_TYPE_LENGTH 4
+#define FLOPPY_INFO_TYPE_1440 "1440"
+#define FLOPPY_INFO_TYPE_720 "0720"
+
     while (1) {
         if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
             memset(&floppy_drives, 0, sizeof (struct Drive) * MAX_NUMBER_FLOPPY_DRIVES);
             memset(&hard_drives, 0, sizeof (struct Drive) * MAX_NUMBER_HARD_DRIVES);
 
+            static FILINFO file_info;
+
             for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (f_stat(floppy_file_names[i], &file_info) == FR_OK) {
-                    switch (file_info.fsize) {
-                        case FLOPPY_1440_SIZE_BYTES:
-                            if (f_open(&floppy_drives[i].file, floppy_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
-                                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
-                                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+                static FIL info_file;
+                static char info[FLOPPY_INFO_TYPE_LENGTH + 1];
+                memset(info, 0, FLOPPY_INFO_TYPE_LENGTH + 1);
+                UINT read_bytes = 0;
 
-                                floppy_drives[i].number_of_heads = FLOPPY_1440_NUMBER_OF_HEADS;
-                                floppy_drives[i].number_of_sectors = FLOPPY_1440_NUMBER_OF_SECTORS;
-                                floppy_drives[i].number_of_cylinders = FLOPPY_1440_NUMBER_OF_CYLINDERS;
-                            }
-                            break;
-                        case FLOPPY_720_SIZE_BYTES:
-                            if (f_open(&floppy_drives[i].file, floppy_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
-                                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_720;
-                                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+                if (
+                        f_open(&info_file, floppy_info_file_names[i], FA_READ) == FR_OK &&
+                        f_read(&info_file, info, FLOPPY_INFO_TYPE_LENGTH, &read_bytes) == FR_OK) {
+                    if (strncmp(info, FLOPPY_INFO_TYPE_1440, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
 
-                                floppy_drives[i].number_of_heads = FLOPPY_720_NUMBER_OF_HEADS;
-                                floppy_drives[i].number_of_sectors = FLOPPY_720_NUMBER_OF_SECTORS;
-                                floppy_drives[i].number_of_cylinders = FLOPPY_720_NUMBER_OF_CYLINDERS;
-                            }
-                            break;
+                        floppy_drives[i].number_of_heads = FLOPPY_1440_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_1440_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_1440_NUMBER_OF_CYLINDERS;
+                    } else if (strncmp(info, FLOPPY_INFO_TYPE_720, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_720;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                        floppy_drives[i].number_of_heads = FLOPPY_720_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_720_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_720_NUMBER_OF_CYLINDERS;
                     }
 
 #ifdef DEBUG
-                    if (is_valid_drive(&floppy_drives[i])) {
-                        printf("MOUNTED FLOPPY%d.IMG[c=%d,h=%d,s=%d]\r\n",
+                    if (has_geometry(&floppy_drives[i])) {
+                        printf("FOUND FLOPPY%d.INF[c=%d,h=%d,s=%d]\r\n",
                                 i,
                                 floppy_drives[i].number_of_cylinders,
                                 floppy_drives[i].number_of_heads,
-                                floppy_drives[i].number_of_sectors);
+                                floppy_drives[i].number_of_sectors
+                                );
+                    }
+#endif                                                    
+                }
+            }
+
+            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK) {
+                    switch (file_info.fsize) {
+                        case FLOPPY_1440_SIZE_BYTES:
+                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_1440) {
+                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
+                            }
+                            break;
+                        case FLOPPY_720_SIZE_BYTES:
+                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_720) {
+                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
+                            }
+                            break;
+                    }
+
+                    if (f_stat(floppy_ro_file_names[i], &file_info) == FR_OK) {
+                        floppy_drives[i].read_only = true;
+                    }
+
+#ifdef DEBUG
+                    if (has_image(&floppy_drives[i])) {
+                        printf("MOUNTED FLOPPY%d.IMG[ro=%d]\r\n", i, floppy_drives[i].read_only);
                     }
 #endif                                
-
                 }
             }
 
             for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                if (f_stat(hard_file_names[i], &file_info) == FR_OK) {
+                if (f_stat(hard_image_file_names[i], &file_info) == FR_OK) {
                     FSIZE_t size = file_info.fsize;
 
-                    if (size > HARD_CYLINDER_SIZE_BYTES && f_open(&hard_drives[i].file, hard_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
+                    if (size > HARD_CYLINDER_SIZE_BYTES && f_open(&hard_drives[i].image_file, hard_image_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
                         hard_drives[i].drive_type_fun8h = 0;
                         hard_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
 
@@ -434,7 +475,7 @@ void main(void) {
                             ctrl->req.scan_req.number_of_floppy_drives = 0;
 
                             for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                                if (is_valid_drive(&floppy_drives[i])) {
+                                if (has_geometry(&floppy_drives[i])) {
                                     ctrl->req.scan_req.number_of_floppy_drives++;
                                 }
                             }
@@ -442,7 +483,7 @@ void main(void) {
                             ctrl->req.scan_req.number_of_hard_drives = 0;
 
                             for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                                if (is_valid_drive(&hard_drives[i])) {
+                                if (has_geometry(&hard_drives[i])) {
                                     ctrl->req.scan_req.number_of_hard_drives++;
                                 }
                             }
@@ -470,15 +511,15 @@ void main(void) {
                                     );
 #endif
 
-                            if (drive && is_valid_drive(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
+                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
 #ifdef DEBUG
                                 printf("[lba=%lu]\r\n", lba);
 #endif
 
                                 UINT read_bytes = 0;
                                 ctrl->req.drive_req.status = (
-                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
-                                        f_read(&drive->file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
+                                        f_lseek(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
+                                        f_read(&drive->image_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
                                         read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
                                 next_drive_req(drive, &ctrl->req.drive_req);
@@ -503,17 +544,24 @@ void main(void) {
                                     );
 #endif
 
-                            if (drive && is_valid_drive(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
+                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
+                                if (!drive->read_only) {
 #ifdef DEBUG
-                                printf("[lba=%lu]\r\n", lba);
+                                    printf("[lba=%lu]\r\n", lba);
 #endif
-                                UINT written_bytes = 0;
-                                ctrl->req.drive_req.status = (
-                                        f_lseek(&drive->file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
-                                        f_write(&drive->file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
-                                        written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+                                    UINT written_bytes = 0;
+                                    ctrl->req.drive_req.status = (
+                                            f_lseek(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
+                                            f_write(&drive->image_file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
+                                            written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
-                                next_drive_req(drive, &ctrl->req.drive_req);
+                                    next_drive_req(drive, &ctrl->req.drive_req);
+                                } else {
+#ifdef DEBUG
+                                    printf("[write protected]\r\n");
+#endif
+                                    ctrl->req.drive_req.status = STATUS_WRITE_PROTECTED;
+                                }
                             } else {
 #ifdef DEBUG
                                 printf("[bad sector]\r\n");
@@ -535,7 +583,7 @@ void main(void) {
                                     );
 #endif
 
-                            if (drive && is_valid_drive(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
+                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
 #ifdef DEBUG
                                 printf("[lba=%lu]\r\n", lba);
 #endif
@@ -555,13 +603,13 @@ void main(void) {
 
                             if (is_hard_drive(ctrl->req.read_params_fun8h_req.drive_number)) {
                                 for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                                    if (is_valid_drive(&hard_drives[i])) {
+                                    if (has_geometry(&hard_drives[i])) {
                                         ctrl->req.read_params_fun8h_req.number_of_drives++;
                                     }
                                 }
                             } else {
                                 for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                                    if (is_valid_drive(&floppy_drives[i])) {
+                                    if (has_geometry(&floppy_drives[i])) {
                                         ctrl->req.read_params_fun8h_req.number_of_drives++;
                                     }
                                 }
@@ -571,12 +619,13 @@ void main(void) {
 
 #ifdef DEBUG
                             printf(
-                                    "CTRL_REQUEST_READ_PARAMS_FUN8H[d=%d]",
+                                    "READ_PARAMS_FUN8H[d=%d]",
                                     ctrl->req.read_params_fun8h_req.drive_number
                                     );
 #endif                                
 
-                            if (drive && is_valid_drive(drive)) {
+                            if (drive && has_geometry(drive)) {
+                                set_params_fun8h(drive, &ctrl->req.read_params_fun8h_req);
 #ifdef DEBUG
                                 printf(
                                         "[mlc=%d,mh=%d,mshc=%d]\r\n",
@@ -585,10 +634,9 @@ void main(void) {
                                         ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers
                                         );
 #endif                                
-                                set_params_fun8h(drive, &ctrl->req.read_params_fun8h_req);
                             } else {
 #ifdef DEBUG
-                                printf("[invalid drive]\r\n");
+                                printf("[no geometry]\r\n");
 #endif                                
                                 ctrl->req.read_params_fun8h_req.success = 0;
                                 ctrl->req.read_params_fun8h_req.drive_type = 0;
@@ -603,15 +651,22 @@ void main(void) {
                             drive = find_drive(ctrl->req.read_params_fun15h_req.drive_number);
 #ifdef DEBUG
                             printf(
-                                    "CTRL_REQUEST_READ_PARAMS_FUN15H[d=%d]\r\n",
+                                    "READ_PARAMS_FUN15H[d=%d]",
                                     ctrl->req.read_params_fun15h_req.drive_number
                                     );
 #endif
 
-                            if (drive && is_valid_drive(drive)) {
+                            if (drive && has_geometry(drive)) {
+#ifdef DEBUG
+                                printf("[t=%d]\r\n", drive->drive_type_fun15h);
+#endif
+
                                 ctrl->req.read_params_fun15h_req.success = 1;
                                 ctrl->req.read_params_fun15h_req.drive_type = drive->drive_type_fun15h;
                             } else {
+#ifdef DEBUG
+                                printf("[no geometry]\r\n");
+#endif
                                 ctrl->req.read_params_fun15h_req.success = 0;
                                 ctrl->req.read_params_fun15h_req.drive_type = 0;
                             }
@@ -631,14 +686,14 @@ void main(void) {
             }
 
             for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (is_valid_drive(&floppy_drives[i])) {
-                    f_close(&floppy_drives[i].file);
+                if (has_image(&floppy_drives[i])) {
+                    f_close(&floppy_drives[i].image_file);
                 }
             }
 
             for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                if (is_valid_drive(&hard_drives[i])) {
-                    f_close(&hard_drives[i].file);
+                if (has_image(&hard_drives[i])) {
+                    f_close(&hard_drives[i].image_file);
                 }
             }
 
