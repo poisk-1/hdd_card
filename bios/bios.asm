@@ -153,20 +153,20 @@ entry:
 	jmp .done
 
 .check_succeeded:
-	DisplayString `Adapter success\r\nScanning drives...\r\n`
+	DisplayString `Adapter successfully initialized\r\nScanning disk drives...\r\n`
 
 	SubmitIo ctrl_request_scan
-	mov byte al, [io_ctrl_scan_req.number_of_floppy_drives]
-	mov byte ah, [io_ctrl_scan_req.number_of_hard_drives]
+	mov byte al, [io_ctrl_scan_req.number_of_floppy_drives] ; 0-4
+	mov byte ah, [io_ctrl_scan_req.number_of_hard_drives] ; 0-2
 
 	push ax
 
-	call display_byte
-	DisplayString ` floppy drive(s) found\r\n`
+	call display_nibble
+	DisplayString ` floppy disk drive(s) found\r\n`
 
 	mov al, ah
-	call display_byte
-	DisplayString ` hard drive(s) found\r\n`
+	call display_nibble
+	DisplayString ` hard disk drive(s) found\r\n`
 
 	pop ax
 
@@ -225,22 +225,22 @@ int13h:
 	jmp .return_error
 	
 .dispatch:
-	dw .reset                 ; 0
-	dw .read_status	          ; 1
-	dw .read                  ; 2
-	dw .write                 ; 3
-	dw .verify                ; 4
-	dw .empty                 ; 5 (format)
-	dw 0                      ; 6
-	dw 0                      ; 7
-	dw .read_params_fun8h     ; 8
-	dw 0                      ; 9
-	dw 0                      ; a
-	dw 0                      ; b
-	dw .empty                 ; c (seek)
-	dw 0                      ; d
-	dw 0                      ; e
-	dw 0                      ; f
+	dw .reset                 ; 00
+	dw .read_status	          ; 01
+	dw .read                  ; 02
+	dw .write                 ; 03
+	dw .verify                ; 04
+	dw .empty                 ; 05 (format)
+	dw 0                      ; 06
+	dw 0                      ; 07
+	dw .read_params_fun8h     ; 08
+	dw 0                      ; 09
+	dw 0                      ; 0a
+	dw 0                      ; 0b
+	dw .empty                 ; 0c (seek)
+	dw 0                      ; 0d
+	dw 0                      ; 0e
+	dw 0                      ; 0f
 	dw 0                      ; 10
 	dw 0                      ; 11
 	dw 0                      ; 12
@@ -509,7 +509,8 @@ get_status:
 	pop ds
 	ret
 
-	; AH - number of hard drives
+	; AL - number of floppy drives 0-4
+	; AH - number of hard drives 0-2
 install_bios_data:
 	push ds
 	push ax
@@ -521,11 +522,20 @@ install_bios_data:
 
 	mov [0x75], ah ; number of hard drives
 
+	cmp al, 0
+	je .done
+
+	dec al
+	mov cl, 6
+	shl al, cl
+
 	mov bx, [0x10]
 	and bl, 0x3f
-	or bl, 0x41 ; 2 floppy drives (01) in bits 7-6 and boot from floppy in bit 0
+	or bl, al ; number of floppy drives minus 1 in bits 7-6
+	or bl, 1  ; boot from floppy in bit 0
 	mov [0x10], bx
 
+.done:
 	pop cx
 	pop bx
 	pop ax
@@ -554,19 +564,32 @@ int19h:
 	jz .try_hard_drive
 
 	mov dl, 0 ; boot from 1st floppy drive
+
+.try_floppy_drive:
 	call .read_boot_sector
-	jc .try_second_floppy_drive
+	jc .try_next_floppy_drive
 
 	cmp word [es:boot_sector_signature_offset], boot_sector_signature
+	jne .try_next_floppy_drive
+
+	DisplayString `Floppy drive #`
+	mov al, dl
+	call display_nibble
+	DisplayString ` has bootable disk. Would you like to boot from it? [y/n]: `
+	call read_char
+	call display_char
+	DisplayString `\r\n`
+
+	cmp al, 'y'
 	je .boot
 
-.try_second_floppy_drive:
-	mov dl, 1 ; boot from 2nd floppy drive
-	call .read_boot_sector
-	jc .try_hard_drive
-
-	cmp word [es:boot_sector_signature_offset], boot_sector_signature
+	cmp al, 'Y'
 	je .boot
+
+.try_next_floppy_drive:
+	inc dl
+	cmp dl, 4 ; try all 4 floppy drives
+	jl .try_floppy_drive
 
 .try_hard_drive:
 	mov ah, [0x75] ; number of hard drives
@@ -578,10 +601,14 @@ int19h:
 	jc .no_boot
 
 	cmp word [es:boot_sector_signature_offset], boot_sector_signature
-	je .boot
+	jne .no_boot
+
+	DisplayString `Hard disk is bootable.\r\n`
+
+	jmp .boot
 
 .no_boot:
-	DisplayString `Bootable disk not found!\r\n`
+	DisplayString `No bootable disk was found!\r\n`
 	call delay
 
 	pop cx	
@@ -593,7 +620,7 @@ int19h:
 	retf 2
 
 .boot:
-	DisplayString `Booting operating system ...\r\n\r\n`
+	DisplayString `Booting an operating system ...\r\n\r\n`
 
 	jmp 0:0x7c00
 
