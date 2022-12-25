@@ -49,14 +49,17 @@ ctrl_request_verify:             equ 0x06
 ctrl_request_read_params_fun8h:  equ 0x07
 ctrl_request_read_params_fun15h: equ 0x08
 
-io_segment: equ 0xe000
-io_data_size: equ 0x200
+io_offset: equ 0x1000 ; reserve 4K for BIOS
 
-struc io_ctrl, io_data_size
+struc io_data, io_offset
+	.buffer resb 0x200
+endstruc
+
+struc io_ctrl, io_offset + io_data_size
 	.request resb 1
 endstruc
 
-io_ctrl_req_offset: equ io_data_size + io_ctrl_size
+io_ctrl_req_offset: equ io_offset + io_data_size + io_ctrl_size
 
 struc io_ctrl_drive_req, io_ctrl_req_offset
 	.status resb 1
@@ -119,12 +122,12 @@ entry:
 	DisplayString `Poisk HDD card version 0.1\r\n`
 	DisplayString `Copyright (c) 2022 Peter Hizalev\r\n\r\n`
 
-	mov ax, io_segment
+	mov ax, cs
 	mov ds, ax ; DS to point to IO memory
 	mov es, ax ; ES to point to IO memory
 
 	mov cx, io_data_size
-	sub di, di
+	mov di, io_data
 
 .fill:
 	mov ax, io_data_size
@@ -135,7 +138,7 @@ entry:
 	SubmitIo ctrl_request_check
 
 	mov cx, io_data_size
-	sub si, si
+	mov si, io_data
 
 .check:
 	mov bx, io_data_size
@@ -196,7 +199,7 @@ int13h:
 	push di
 	push si
 
-	mov di, io_segment
+	mov di, cs
 	mov ds, di ; DS to point to IO memory
 
 	cmp ah, 0x1f
@@ -298,8 +301,6 @@ int13h:
 	mov bl, al ; save number of sectors to read
 
 .read_next_sector:
-	sub si, si ; make SI to point to the beginning of the IO buffer
-
 	SubmitIo ctrl_request_read
 	mov byte ah, [io_ctrl_drive_req.status]
 
@@ -308,6 +309,7 @@ int13h:
 	cmp ah, 0 ; has read error occured?
 	jne .read_error
 
+	mov si, io_data ; make SI to point to the beginning of the IO buffer
 	mov cx, io_data_size
 	rep movsb ; copy data bytes from IO buffer (DS:SI) to read buffer (ES:DI)
 
@@ -341,8 +343,7 @@ int13h:
 	mov bl, al ; save number of sectors to write
 
 .write_next_sector:
-	sub di, di ; make DI to point to the beginning of the IO buffer
-
+	mov di, io_data ; make DI to point to the beginning of the IO buffer
 	mov cx, io_data_size
 
 	push es
