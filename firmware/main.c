@@ -104,12 +104,14 @@ enum Request {
     CTRL_REQUEST_VERIFY = 0x6,
     CTRL_REQUEST_READ_PARAMS_FUN8H = 0x7,
     CTRL_REQUEST_READ_PARAMS_FUN15H = 0x8,
+    CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0x9,
 };
 
 enum DriveReqStatus {
     STATUS_NO_ERROR = 0,
     STATUS_BAD_SECTOR = 0x2,
     STATUS_WRITE_PROTECTED = 0x3,
+    STATUS_DISK_CHANGED = 0x6,
     STATUS_CONTROLLER_FAILED = 0x20
 };
 
@@ -153,11 +155,18 @@ struct ReadParamsFun15hReq {
     uint8_t drive_type;
 };
 
+struct DetectMediaChangeReq {
+    uint8_t drive_number;
+
+    uint8_t status;
+};
+
 union Req {
     struct DriveReq drive_req;
     struct ScanReq scan_req;
     struct ReadParamsFun8hReq read_params_fun8h_req;
     struct ReadParamsFun15hReq read_params_fun15h_req;
+    struct DetectMediaChangeReq detect_media_change;
 };
 
 struct Ctrl {
@@ -181,6 +190,7 @@ struct Drive {
     FIL image_file;
 
     bool read_only;
+    bool media_changed;
 
     uint8_t drive_type_fun8h;
     uint8_t drive_type_fun15h;
@@ -201,51 +211,50 @@ const char* hard_image_file_names[MAX_NUMBER_HARD_DRIVES] = {"HARD0.IMG", "HARD1
 struct Drive floppy_drives[MAX_NUMBER_FLOPPY_DRIVES];
 struct Drive hard_drives[MAX_NUMBER_HARD_DRIVES];
 
-#define FLOPPY_1440_SECTOR_SIZE_BYTES 512
+#define FLOPPY_SECTOR_SIZE_BYTES 512
+
 #define FLOPPY_1440_NUMBER_OF_HEADS 2
 #define FLOPPY_1440_NUMBER_OF_SECTORS 18
 #define FLOPPY_1440_NUMBER_OF_CYLINDERS 80
-#define FLOPPY_1440_SIZE_BYTES ((FSIZE_t)\
-    FLOPPY_1440_NUMBER_OF_HEADS * \
-    FLOPPY_1440_NUMBER_OF_SECTORS * \
-    FLOPPY_1440_NUMBER_OF_CYLINDERS * \
-    FLOPPY_1440_SECTOR_SIZE_BYTES)
 
 #define FLOPPY_720_SECTOR_SIZE_BYTES 512
 #define FLOPPY_720_NUMBER_OF_HEADS 2
 #define FLOPPY_720_NUMBER_OF_SECTORS 18
 #define FLOPPY_720_NUMBER_OF_CYLINDERS 40
-#define FLOPPY_720_SIZE_BYTES ((FSIZE_t)\
-    FLOPPY_720_NUMBER_OF_HEADS * \
-    FLOPPY_720_NUMBER_OF_SECTORS * \
-    FLOPPY_720_NUMBER_OF_CYLINDERS * \
-    FLOPPY_720_SECTOR_SIZE_BYTES)
 
 #define FLOPPY_1200_SECTOR_SIZE_BYTES 512
 #define FLOPPY_1200_NUMBER_OF_HEADS 2
 #define FLOPPY_1200_NUMBER_OF_SECTORS 15
 #define FLOPPY_1200_NUMBER_OF_CYLINDERS 80
-#define FLOPPY_1200_SIZE_BYTES ((FSIZE_t)\
-    FLOPPY_1200_NUMBER_OF_HEADS * \
-    FLOPPY_1200_NUMBER_OF_SECTORS * \
-    FLOPPY_1200_NUMBER_OF_CYLINDERS * \
-    FLOPPY_1200_SECTOR_SIZE_BYTES)
 
 #define FLOPPY_360_SECTOR_SIZE_BYTES 512
 #define FLOPPY_360_NUMBER_OF_HEADS 2
 #define FLOPPY_360_NUMBER_OF_SECTORS 9
 #define FLOPPY_360_NUMBER_OF_CYLINDERS 40
-#define FLOPPY_360_SIZE_BYTES ((FSIZE_t)\
-    FLOPPY_360_NUMBER_OF_HEADS * \
-    FLOPPY_360_NUMBER_OF_SECTORS * \
-    FLOPPY_360_NUMBER_OF_CYLINDERS * \
-    FLOPPY_360_SECTOR_SIZE_BYTES)
+
+#define FLOPPY_180_SECTOR_SIZE_BYTES 512
+#define FLOPPY_180_NUMBER_OF_HEADS 1
+#define FLOPPY_180_NUMBER_OF_SECTORS 9
+#define FLOPPY_180_NUMBER_OF_CYLINDERS 40
+
+#define FLOPPY_320_SECTOR_SIZE_BYTES 512
+#define FLOPPY_320_NUMBER_OF_HEADS 2
+#define FLOPPY_320_NUMBER_OF_SECTORS 8
+#define FLOPPY_320_NUMBER_OF_CYLINDERS 40
+
+#define FLOPPY_160_SECTOR_SIZE_BYTES 512
+#define FLOPPY_160_NUMBER_OF_HEADS 1
+#define FLOPPY_160_NUMBER_OF_SECTORS 8
+#define FLOPPY_160_NUMBER_OF_CYLINDERS 40
 
 #define FLOPPY_INFO_TYPE_LENGTH 4
 #define FLOPPY_INFO_TYPE_1440 "1440"
 #define FLOPPY_INFO_TYPE_720 "0720"
 #define FLOPPY_INFO_TYPE_1200 "1200"
 #define FLOPPY_INFO_TYPE_360 "0360"
+#define FLOPPY_INFO_TYPE_180 "0180"
+#define FLOPPY_INFO_TYPE_320 "0320"
+#define FLOPPY_INFO_TYPE_160 "0160"
 
 #define HARD_SECTOR_SIZE_BYTES 512
 #define HARD_NUMBER_OF_HEADS 16
@@ -264,6 +273,13 @@ bool has_geometry(const struct Drive* drive) {
 
 bool has_image(const struct Drive* drive) {
     return drive->image_file.obj.fs != NULL;
+}
+
+uint32_t disk_size_bytes(const struct Drive* drive) {
+    return (uint32_t) drive->number_of_cylinders *
+            (uint32_t) drive->number_of_heads *
+            (uint32_t) drive->number_of_sectors *
+            FLOPPY_SECTOR_SIZE_BYTES;
 }
 
 struct Drive* find_drive(uint8_t drive_number) {
@@ -428,6 +444,27 @@ void main(void) {
                         floppy_drives[i].number_of_heads = FLOPPY_360_NUMBER_OF_HEADS;
                         floppy_drives[i].number_of_sectors = FLOPPY_360_NUMBER_OF_SECTORS;
                         floppy_drives[i].number_of_cylinders = FLOPPY_360_NUMBER_OF_CYLINDERS;
+                    } else if (strncmp(info, FLOPPY_INFO_TYPE_180, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                        floppy_drives[i].number_of_heads = FLOPPY_180_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_180_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_180_NUMBER_OF_CYLINDERS;
+                    } else if (strncmp(info, FLOPPY_INFO_TYPE_320, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                        floppy_drives[i].number_of_heads = FLOPPY_320_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_320_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_320_NUMBER_OF_CYLINDERS;
+                    } else if (strncmp(info, FLOPPY_INFO_TYPE_160, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                        floppy_drives[i].number_of_heads = FLOPPY_160_NUMBER_OF_HEADS;
+                        floppy_drives[i].number_of_sectors = FLOPPY_160_NUMBER_OF_SECTORS;
+                        floppy_drives[i].number_of_cylinders = FLOPPY_160_NUMBER_OF_CYLINDERS;
                     }
 
 #ifdef DEBUG
@@ -444,33 +481,15 @@ void main(void) {
             }
 
             for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK) {
-                    switch (file_info.fsize) {
-                        case FLOPPY_1440_SIZE_BYTES:
-                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_1440) {
-                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
-                            }
-                            break;
-                        case FLOPPY_720_SIZE_BYTES:
-                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_720) {
-                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
-                            }
-                            break;
-                        case FLOPPY_1200_SIZE_BYTES:
-                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_1200) {
-                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
-                            }
-                            break;
-                        case FLOPPY_360_SIZE_BYTES:
-                            if (floppy_drives[i].drive_type_fun8h == FUN8H_DRIVE_TYPE_FLOPPY_360) {
-                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
-                            }
-                            break;
-                    }
+                if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK &&
+                        file_info.fsize == disk_size_bytes(&floppy_drives[i])) {
+                    f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
 
                     if (f_stat(floppy_ro_file_names[i], &file_info) == FR_OK) {
                         floppy_drives[i].read_only = true;
                     }
+
+                    floppy_drives[i].media_changed = true;
 
 #ifdef DEBUG
                     if (has_image(&floppy_drives[i])) {
@@ -598,7 +617,12 @@ void main(void) {
 #endif
 
                             if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
-                                if (!drive->read_only) {
+                                if (drive->read_only) {
+#ifdef DEBUG
+                                    printf("[write protected]\r\n");
+#endif
+                                    ctrl->req.drive_req.status = STATUS_WRITE_PROTECTED;
+                                } else {
 #ifdef DEBUG
                                     printf("[lba=%lu]\r\n", lba);
 #endif
@@ -609,11 +633,6 @@ void main(void) {
                                             written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
 
                                     next_drive_req(drive, &ctrl->req.drive_req);
-                                } else {
-#ifdef DEBUG
-                                    printf("[write protected]\r\n");
-#endif
-                                    ctrl->req.drive_req.status = STATUS_WRITE_PROTECTED;
                                 }
                             } else {
 #ifdef DEBUG
@@ -724,6 +743,34 @@ void main(void) {
                                 ctrl->req.read_params_fun15h_req.drive_type = 0;
                             }
 
+                            break;
+
+                        case CTRL_REQUEST_DETECT_MEDIA_CHANGE:
+                            drive = find_drive(ctrl->req.detect_media_change.drive_number);
+#ifdef DEBUG
+                            printf(
+                                    "DETECT_MEDIA_CHANGE[d=%d",
+                                    ctrl->req.detect_media_change.drive_number
+                                    );
+#endif
+
+                            if (drive && has_image(drive)) {
+                                if (drive->media_changed) {
+                                    drive->media_changed = false;
+#ifdef DEBUG
+                                    printf("[media changed]\r\n");
+#endif
+                                    ctrl->req.detect_media_change.status = STATUS_DISK_CHANGED;
+                                } else {
+#ifdef DEBUG
+                                    printf("[media not changed]\r\n");
+#endif
+                                    ctrl->req.detect_media_change.status = 0;
+                                }
+                            }
+                            else {
+                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                            }
                             break;
 
                         default:

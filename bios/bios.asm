@@ -39,15 +39,16 @@ boot_sector_size equ 0x200
 boot_sector_signature_offset equ (boot_sector_offset + boot_sector_size - 2)
 boot_sector_signature equ 0xaa55
 
-ctrl_request_done:               equ 0x00
-ctrl_request_check:              equ 0x01
-ctrl_request_scan:               equ 0x02
-ctrl_request_reset:              equ 0x03
-ctrl_request_read:               equ 0x04
-ctrl_request_write:              equ 0x05
-ctrl_request_verify:             equ 0x06
-ctrl_request_read_params_fun8h:  equ 0x07
-ctrl_request_read_params_fun15h: equ 0x08
+ctrl_request_done:                  equ 0x00
+ctrl_request_check:                 equ 0x01
+ctrl_request_scan:                  equ 0x02
+ctrl_request_reset:                 equ 0x03
+ctrl_request_read:                  equ 0x04
+ctrl_request_write:                 equ 0x05
+ctrl_request_verify:                equ 0x06
+ctrl_request_read_params_fun8h:     equ 0x07
+ctrl_request_read_params_fun15h:    equ 0x08
+ctrl_request_detect_media_change:   equ 0x09
 
 io_offset: equ 0x1000 ; reserve 4K for BIOS
 
@@ -92,6 +93,12 @@ struc io_ctrl_read_params_fun15h_req, io_ctrl_req_offset
     .success resb 1
 
     .drive_type resb 1
+endstruc
+
+struc io_ctrl_detect_media_change_req, io_ctrl_req_offset
+    .drive_number resb 1
+
+    .status resb 1
 endstruc
 
 %macro SubmitIo 1
@@ -250,7 +257,7 @@ int13h:
 	dw 0                      ; 13
 	dw 0                      ; 14
 	dw .read_params_fun15h    ; 15
-	dw .empty                 ; 16 (detect media change)
+	dw .detect_media_change   ; 16
 	dw .empty                 ; 17 (set diskette type)
 	dw .empty                 ; 18 (set media type)
 	dw 0                      ; 19
@@ -451,17 +458,27 @@ int13h:
 
 	SubmitIo ctrl_request_read_params_fun15h
 
-	pop si
-	pop di
-	pop dx
-	pop cx
-	pop bx
-
 	mov byte ah, [io_ctrl_read_params_fun15h_req.drive_type]
 
 	cmp byte [io_ctrl_read_params_fun15h_req.success], 0
-	jne .return_success_and_registers
-	jmp .return_error_and_registers
+	jne .return_success
+	jmp .return_error
+
+	; DL - drive number
+	; Returns:
+	; AH - media change status
+.detect_media_change:
+	mov byte [io_ctrl_detect_media_change_req.drive_number], dl
+
+	SubmitIo ctrl_request_detect_media_change
+
+	mov byte ah, [io_ctrl_detect_media_change_req.status]
+
+	call set_status
+
+	cmp ah, 0 ; media changed or error?
+	jne .return_error
+	jmp .return_success
 
 .return_success:
 	pop si
