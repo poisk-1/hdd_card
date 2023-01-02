@@ -104,9 +104,18 @@ endstruc
 %macro SubmitIo 1
 	mov byte [io_ctrl.request], %1
 
+	cmp byte [io_ctrl.request], ctrl_request_done
+	je %%done
+
 %%wait:
+	push cx
+	mov cx, 54 ; for best performance this delay should match read/write latency
+%%delay:
+	loop %%delay
+	pop cx
 	cmp byte [io_ctrl.request], ctrl_request_done
 	jne %%wait
+%%done:
 %endmacro
 
 section .text
@@ -127,7 +136,7 @@ entry:
 	call cls
 
 	DisplayString `Poisk HDD card version 0.1\r\n`
-	DisplayString `Copyright (c) 2022 Peter Hizalev\r\n\r\n`
+	DisplayString `Copyright (c) 2022-2023 Peter Hizalev\r\n\r\n`
 
 	mov ax, cs
 	mov ds, ax ; DS to point to IO memory
@@ -135,6 +144,8 @@ entry:
 
 	mov cx, io_data_size
 	mov di, io_data
+
+	SubmitIo ctrl_request_check
 
 .fill:
 	mov ax, io_data_size
