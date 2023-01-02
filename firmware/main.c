@@ -45,11 +45,17 @@
 
 #include "mcc_generated_files/mcc.h"
 
+static FATFS fs;
+
 #define CTRL_BUFFER_SIZE 0x100
 #define DATA_BUFFER_SIZE 0x200
 
 static uint8_t ctrl_buffer[CTRL_BUFFER_SIZE];
+#if (FF_MAX_SS == DATA_BUFFER_SIZE)
+static uint8_t *data_buffer = fs.win;
+#else
 static uint8_t data_buffer[DATA_BUFFER_SIZE];
+#endif
 
 void handle_read(void) {
     size_t sel = (size_t) (PORTB & 0xf);
@@ -211,6 +217,12 @@ const char* hard_image_file_names[MAX_NUMBER_HARD_DRIVES] = {"HARD0.IMG", "HARD1
 struct Drive floppy_drives[MAX_NUMBER_FLOPPY_DRIVES];
 struct Drive hard_drives[MAX_NUMBER_HARD_DRIVES];
 
+#define FLOPPY_IMAGE_FILE_CLTBL_SIZE 8
+#define HARD_IMAGE_FILE_CLTBL_SIZE 64
+
+DWORD floppy_image_file_cltbl[MAX_NUMBER_FLOPPY_DRIVES][FLOPPY_IMAGE_FILE_CLTBL_SIZE];
+DWORD hard_image_file_cltbl[MAX_NUMBER_HARD_DRIVES][HARD_IMAGE_FILE_CLTBL_SIZE];
+
 #define FLOPPY_SECTOR_SIZE_BYTES 512
 
 #define FLOPPY_1440_NUMBER_OF_HEADS 2
@@ -368,7 +380,62 @@ void putch(char c) {
     EUSART1_Write(c);
 }
 
-static FATFS fs;
+#if FF_MAX_SS == FF_MIN_SS
+#define SS(fs)	((UINT)FF_MAX_SS)	/* Fixed sector size */
+#else
+#define SS(fs)	((fs)->ssize)	/* Variable sector size */
+#endif
+
+static DWORD clmt_clust(/* <2:Error, >=2:Cluster number */
+        FIL* fp, /* Pointer to the file object */
+        FSIZE_t ofs /* File offset to be converted to cluster# */
+        ) {
+    DWORD cl, ncl, *tbl;
+    FATFS *fs = fp->obj.fs;
+
+
+    tbl = fp->cltbl + 1; /* Top of CLMT */
+    cl = (DWORD) (ofs / SS(fs) / fs->csize); /* Cluster order from top of the file */
+    for (;;) {
+        ncl = *tbl++; /* Number of cluters in the fragment */
+        if (ncl == 0) return 0; /* End of table? (error) */
+        if (cl < ncl) break; /* In this fragment? */
+        cl -= ncl;
+        tbl++; /* Next fragment */
+    }
+    return cl + *tbl; /* Return the cluster number */
+}
+
+static DWORD clst2sect(/* !=0:Sector number, 0:Failed (invalid cluster#) */
+        FATFS* fs, /* Filesystem object */
+        DWORD clst /* Cluster# to be converted */
+        ) {
+    clst -= 2; /* Cluster number is origin from 2 */
+    if (clst >= fs->n_fatent - 2) return 0; /* Is it invalid cluster number? */
+    return fs->database + fs->csize * clst; /* Start sector number of the cluster */
+}
+
+static FRESULT offset2sector(FIL *file, FSIZE_t offset, DWORD *sector) {
+    DWORD cluster;
+    FATFS *fs = file->obj.fs;
+
+    cluster = clmt_clust(file, offset);
+    if (cluster < 2) return FR_INT_ERR;
+
+    *sector = clst2sect(fs, cluster);
+    if (*sector == 0) return FR_INT_ERR;
+
+    *sector += (DWORD) (offset / SS(fs)) & (fs->csize - 1);
+
+    return FR_OK;
+}
+
+static FRESULT setup_clmt(FIL *fp, DWORD *cltbl, DWORD cltbl_size) {
+    cltbl[0] = cltbl_size;
+    fp->cltbl = cltbl;
+
+    return FR_OK;
+}
 
 /*
                          Main application
@@ -376,12 +443,11 @@ static FATFS fs;
 void main(void) {
     // Initialize the device
     SYSTEM_Initialize();
+    ACK_IO_SetHigh();
     INT0_SetInterruptHandler(handle_read);
     INT1_SetInterruptHandler(handle_write);
 
     memset(ctrl_buffer, 0, CTRL_BUFFER_SIZE);
-    memset(data_buffer, 0, DATA_BUFFER_SIZE);
-
     struct Ctrl *ctrl = (struct Ctrl *) ctrl_buffer;
 
     // If using interrupts in PIC18 High/Low Priority Mode you need to enable the Global High and Low Interrupts
@@ -469,7 +535,7 @@ void main(void) {
 
 #ifdef DEBUG
                     if (has_geometry(&floppy_drives[i])) {
-                        printf("FOUND FLOPPY%d.INF[c=%d,h=%d,s=%d]\r\n",
+                        printf("FOUND FLOPPY%d.TXT[c=%d,h=%d,s=%d]\r\n",
                                 i,
                                 floppy_drives[i].number_of_cylinders,
                                 floppy_drives[i].number_of_heads,
@@ -481,21 +547,42 @@ void main(void) {
             }
 
             for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK &&
-                        file_info.fsize == disk_size_bytes(&floppy_drives[i])) {
-                    f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE);
+                if (has_geometry(&floppy_drives[i])) {
+                    if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK &&
+                            file_info.fsize == disk_size_bytes(&floppy_drives[i])) {
+                        if (
+                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE) == FR_OK &&
+                                setup_clmt(&floppy_drives[i].image_file, floppy_image_file_cltbl[i], FLOPPY_IMAGE_FILE_CLTBL_SIZE) == FR_OK &&
+                                f_lseek(&floppy_drives[i].image_file, CREATE_LINKMAP) == FR_OK) {
 
-                    if (f_stat(floppy_ro_file_names[i], &file_info) == FR_OK) {
-                        floppy_drives[i].read_only = true;
-                    }
+                            if (f_stat(floppy_ro_file_names[i], &file_info) == FR_OK) {
+                                floppy_drives[i].read_only = true;
+                            }
 
-                    floppy_drives[i].media_changed = true;
+                            floppy_drives[i].media_changed = true;
 
 #ifdef DEBUG
-                    if (has_image(&floppy_drives[i])) {
-                        printf("MOUNTED FLOPPY%d.IMG[ro=%d]\r\n", i, floppy_drives[i].read_only);
-                    }
+                            if (has_image(&floppy_drives[i])) {
+                                printf("MOUNTED FLOPPY%d.IMG[ro=%d,f=%ld]\r\n",
+                                        i,
+                                        floppy_drives[i].read_only,
+                                        floppy_image_file_cltbl[i][0]);
+                            }
+#endif                            
+                        } else {
+#ifdef DEBUG
+                            printf("TOO MANY FRAGMENTS FLOPPY%d.IMG[f=%ld]\r\n",
+                                    i,
+                                    floppy_image_file_cltbl[i][0]);
 #endif                                
+
+                            f_close(&floppy_drives[i].image_file);
+                        }
+                    } else {
+#ifdef DEBUG
+                        printf("NOT FOUND OR BAD SIZE FLOPPY%d.IMG\r\n", i);
+#endif                                                    
+                    }
                 }
             }
 
@@ -503,25 +590,47 @@ void main(void) {
                 if (f_stat(hard_image_file_names[i], &file_info) == FR_OK) {
                     FSIZE_t size = file_info.fsize;
 
-                    if (size > HARD_CYLINDER_SIZE_BYTES && f_open(&hard_drives[i].image_file, hard_image_file_names[i], FA_READ | FA_WRITE) == FR_OK) {
-                        hard_drives[i].drive_type_fun8h = 0;
-                        hard_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
+                    if (size > HARD_CYLINDER_SIZE_BYTES) {
+                        if (
+                                f_open(&hard_drives[i].image_file, hard_image_file_names[i], FA_READ | FA_WRITE) == FR_OK &&
+                                setup_clmt(&hard_drives[i].image_file, hard_image_file_cltbl[i], HARD_IMAGE_FILE_CLTBL_SIZE) == FR_OK &&
+                                f_lseek(&hard_drives[i].image_file, CREATE_LINKMAP) == FR_OK) {
+                            hard_drives[i].drive_type_fun8h = 0;
+                            hard_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
 
-                        hard_drives[i].number_of_heads = HARD_NUMBER_OF_HEADS;
-                        hard_drives[i].number_of_sectors = HARD_NUMBER_OF_SECTORS;
-                        hard_drives[i].number_of_cylinders = size / HARD_CYLINDER_SIZE_BYTES;
+                            hard_drives[i].number_of_heads = HARD_NUMBER_OF_HEADS;
+                            hard_drives[i].number_of_sectors = HARD_NUMBER_OF_SECTORS;
+                            hard_drives[i].number_of_cylinders = size / HARD_CYLINDER_SIZE_BYTES;
 
-                        if (hard_drives[i].number_of_cylinders > HARD_MAX_NUMBER_OF_CYLINDERS)
-                            hard_drives[i].number_of_cylinders = HARD_MAX_NUMBER_OF_CYLINDERS;
+                            if (hard_drives[i].number_of_cylinders > HARD_MAX_NUMBER_OF_CYLINDERS)
+                                hard_drives[i].number_of_cylinders = HARD_MAX_NUMBER_OF_CYLINDERS;
 
 #ifdef DEBUG
-                        printf("MOUNTED HARD%d.IMG[c=%d,h=%d,s=%d]\r\n",
-                                i,
-                                hard_drives[i].number_of_cylinders,
-                                hard_drives[i].number_of_heads,
-                                hard_drives[i].number_of_sectors);
+                            printf("MOUNTED HARD%d.IMG[c=%d,h=%d,s=%d,f=%ld]\r\n",
+                                    i,
+                                    hard_drives[i].number_of_cylinders,
+                                    hard_drives[i].number_of_heads,
+                                    hard_drives[i].number_of_sectors,
+                                    hard_image_file_cltbl[i][0]);
 #endif                                
+                        } else {
+#ifdef DEBUG
+                            printf("TOO MANY FRAGMENTS HARD%d.IMG[f=%ld]\r\n",
+                                    i,
+                                    hard_image_file_cltbl[i][0]);
+#endif                                
+                            f_close(&hard_drives[i].image_file);
+                        }
+                    } else {
+#ifdef DEBUG
+                        printf("BAD SIZE HARD%d.IMG\r\n", i);
+#endif                                                    
                     }
+
+                } else {
+#ifdef DEBUG
+                    printf("NOT FOUND HARD%d.IMG\r\n", i);
+#endif                                                    
                 }
             }
 
@@ -587,12 +696,10 @@ void main(void) {
 #ifdef DEBUG
                                 printf("[lba=%lu]\r\n", lba);
 #endif
-
-                                UINT read_bytes = 0;
+                                DWORD sector = 0;
                                 ctrl->req.drive_req.status = (
-                                        f_lseek(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
-                                        f_read(&drive->image_file, data_buffer, DATA_BUFFER_SIZE, &read_bytes) == FR_OK &&
-                                        read_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+                                        offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
+                                        SD_SPI_SectorRead(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
 
                                 next_drive_req(drive, &ctrl->req.drive_req);
                             } else {
@@ -626,11 +733,11 @@ void main(void) {
 #ifdef DEBUG
                                     printf("[lba=%lu]\r\n", lba);
 #endif
-                                    UINT written_bytes = 0;
+
+                                    DWORD sector = 0;
                                     ctrl->req.drive_req.status = (
-                                            f_lseek(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba) == FR_OK &&
-                                            f_write(&drive->image_file, data_buffer, DATA_BUFFER_SIZE, &written_bytes) == FR_OK &&
-                                            written_bytes == DATA_BUFFER_SIZE) ? 0 : STATUS_BAD_SECTOR;
+                                            offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
+                                            SD_SPI_SectorWrite(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
 
                                     next_drive_req(drive, &ctrl->req.drive_req);
                                 }
@@ -767,8 +874,7 @@ void main(void) {
 #endif
                                     ctrl->req.detect_media_change.status = 0;
                                 }
-                            }
-                            else {
+                            } else {
                                 ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
                             }
                             break;
