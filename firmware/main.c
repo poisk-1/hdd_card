@@ -106,11 +106,14 @@ enum Request {
     CTRL_REQUEST_SCAN = 0x2,
     CTRL_REQUEST_RESET = 0x3,
     CTRL_REQUEST_READ = 0x4,
-    CTRL_REQUEST_WRITE = 0x5,
-    CTRL_REQUEST_VERIFY = 0x6,
-    CTRL_REQUEST_READ_PARAMS_FUN8H = 0x7,
-    CTRL_REQUEST_READ_PARAMS_FUN15H = 0x8,
-    CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0x9,
+    CTRL_REQUEST_READ_NEXT = 0x5,
+    CTRL_REQUEST_WRITE = 0x6,
+    CTRL_REQUEST_WRITE_NEXT = 0x7,
+    CTRL_REQUEST_VERIFY = 0x8,
+    CTRL_REQUEST_VERIFY_NEXT = 0x9,
+    CTRL_REQUEST_READ_PARAMS_FUN8H = 0xa,
+    CTRL_REQUEST_READ_PARAMS_FUN15H = 0xb,
+    CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0xc,
 };
 
 enum DriveReqStatus {
@@ -330,40 +333,6 @@ bool chs_to_lba(const struct Drive* drive, const struct DriveReq* disk_req, uint
     }
 
     return false;
-}
-
-void next_drive_req(const struct Drive* drive, struct DriveReq* disk_req) {
-    uint32_t cylinder_number =
-            (uint32_t) disk_req->low_cylinder_number |
-            (((uint32_t) disk_req->sector_and_high_cylinder_numbers & HIGH_CYLINDER_NUMBER_MASK) << HIGH_CYLINDER_BITS);
-
-    uint32_t head_number = disk_req->head_number;
-
-    uint32_t sector_number =
-            (uint32_t) disk_req->sector_and_high_cylinder_numbers & SECTOR_NUMBER_MASK;
-
-    sector_number++;
-
-    if (sector_number > drive->number_of_sectors) {
-        sector_number = 1;
-
-        head_number++;
-
-        if (head_number >= drive->number_of_heads) {
-            head_number = 0;
-            cylinder_number++;
-
-            if (cylinder_number >= drive->number_of_cylinders) {
-                cylinder_number = 0;
-            }
-        }
-    }
-
-    disk_req->low_cylinder_number = (uint8_t) (cylinder_number & 0xff);
-    disk_req->head_number = (uint8_t) head_number;
-    disk_req->sector_and_high_cylinder_numbers =
-            (uint8_t) (sector_number & SECTOR_NUMBER_MASK) |
-            (uint8_t) ((cylinder_number >> HIGH_CYLINDER_BITS) & HIGH_CYLINDER_NUMBER_MASK);
 }
 
 void set_params_fun8h(const struct Drive* drive, struct ReadParamsFun8hReq* req) {
@@ -634,13 +603,13 @@ void main(void) {
                 }
             }
 
+            struct Drive* drive = NULL;
+            uint32_t lba = 0;
+            DWORD sector = 0;            
+
             while (SD_SPI_IsMediaPresent()) {
                 if (ctrl->request != CTRL_REQUEST_DONE) {
                     LED_SetLow();
-
-                    struct Drive* drive = NULL;
-                    uint32_t lba = 0;
-
                     switch (ctrl->request) {
                         case CTRL_REQUEST_CHECK:
 #ifdef DEBUG
@@ -692,23 +661,27 @@ void main(void) {
                                     );
 #endif
 
-                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
-#ifdef DEBUG
-                                printf("[lba=%lu]\r\n", lba);
-#endif
-                                DWORD sector = 0;
-                                ctrl->req.drive_req.status = (
-                                        offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
-                                        SD_SPI_SectorRead(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
-
-                                next_drive_req(drive, &ctrl->req.drive_req);
-                            } else {
+                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba))) {
 #ifdef DEBUG
                                 printf("[bad sector]\r\n");
 #endif
                                 ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                break;
                             }
 
+
+                        case CTRL_REQUEST_READ_NEXT:
+#ifdef DEBUG
+                            if (ctrl->request == CTRL_REQUEST_READ_NEXT) {
+                                printf("READ_NEXT");
+                            }
+                            printf("[lba=%lu]\r\n", lba);
+#endif
+                            ctrl->req.drive_req.status = (
+                                    offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
+                                    SD_SPI_SectorRead(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
+
+                            lba++;
                             break;
 
                         case CTRL_REQUEST_WRITE:
@@ -729,25 +702,28 @@ void main(void) {
                                     printf("[write protected]\r\n");
 #endif
                                     ctrl->req.drive_req.status = STATUS_WRITE_PROTECTED;
-                                } else {
-#ifdef DEBUG
-                                    printf("[lba=%lu]\r\n", lba);
-#endif
-
-                                    DWORD sector = 0;
-                                    ctrl->req.drive_req.status = (
-                                            offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
-                                            SD_SPI_SectorWrite(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
-
-                                    next_drive_req(drive, &ctrl->req.drive_req);
+                                    break;
                                 }
                             } else {
 #ifdef DEBUG
                                 printf("[bad sector]\r\n");
 #endif
                                 ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                break;
                             }
 
+                        case CTRL_REQUEST_WRITE_NEXT:
+#ifdef DEBUG
+                            if (ctrl->request == CTRL_REQUEST_WRITE_NEXT) {
+                                printf("WRITE_NEXT");
+                            }
+                            printf("[lba=%lu]\r\n", lba);
+#endif
+                            ctrl->req.drive_req.status = (
+                                    offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
+                                    SD_SPI_SectorWrite(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
+
+                            lba++;
                             break;
 
                         case CTRL_REQUEST_VERIFY:
@@ -762,19 +738,25 @@ void main(void) {
                                     );
 #endif
 
-                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
-#ifdef DEBUG
-                                printf("[lba=%lu]\r\n", lba);
-#endif
-                                ctrl->req.drive_req.status = 0;
-                                next_drive_req(drive, &ctrl->req.drive_req);
-                            } else {
+                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba))) {
 #ifdef DEBUG
                                 printf("[bad sector]\r\n");
 #endif
                                 ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                break;
                             }
 
+                        case CTRL_REQUEST_VERIFY_NEXT:
+#ifdef DEBUG
+                            if (ctrl->request == CTRL_REQUEST_VERIFY_NEXT) {
+                                printf("WRITE_NEXT");
+                            }
+                            printf("[lba=%lu]\r\n", lba);
+#endif
+                            ctrl->req.drive_req.status =
+                                    offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK
+                                    ? 0 : STATUS_BAD_SECTOR;
+                            lba++;
                             break;
 
                         case CTRL_REQUEST_READ_PARAMS_FUN8H:

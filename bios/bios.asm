@@ -44,11 +44,14 @@ ctrl_request_check:                 equ 0x01
 ctrl_request_scan:                  equ 0x02
 ctrl_request_reset:                 equ 0x03
 ctrl_request_read:                  equ 0x04
-ctrl_request_write:                 equ 0x05
-ctrl_request_verify:                equ 0x06
-ctrl_request_read_params_fun8h:     equ 0x07
-ctrl_request_read_params_fun15h:    equ 0x08
-ctrl_request_detect_media_change:   equ 0x09
+ctrl_request_read_next:             equ 0x05
+ctrl_request_write:                 equ 0x06
+ctrl_request_write_next:            equ 0x07
+ctrl_request_verify:                equ 0x08
+ctrl_request_verify_next:           equ 0x09
+ctrl_request_read_params_fun8h:     equ 0x0a
+ctrl_request_read_params_fun15h:    equ 0x0b
+ctrl_request_detect_media_change:   equ 0x0c
 
 io_offset: equ 0x1000 ; reserve 4K for BIOS
 
@@ -107,14 +110,20 @@ endstruc
 	cmp byte [io_ctrl.request], ctrl_request_done
 	je %%done
 
+	push cx
+	mov cx, 0x100
 %%wait:
 	push cx
-	mov cx, 54 ; for best performance this delay should match read/write latency
 %%delay:
 	loop %%delay
 	pop cx
+	cmp cx, 0x10
+	je %%min_delay
+	shr cx, 1
+%%min_delay:
 	cmp byte [io_ctrl.request], ctrl_request_done
 	jne %%wait
+	pop cx
 %%done:
 %endmacro
 
@@ -319,7 +328,17 @@ int13h:
 	mov bl, al ; save number of sectors to read
 
 .read_next_sector:
+	cmp bl, al ; submit read next?
+	jne .do_read_next
+
 	SubmitIo ctrl_request_read
+	
+	jmp .check_read_status
+
+.do_read_next:
+	SubmitIo ctrl_request_read_next
+
+.check_read_status:
 	mov byte ah, [io_ctrl_drive_req.status]
 
 	call set_status
@@ -376,7 +395,17 @@ int13h:
 	pop es
 	pop ds ; swap DS and ES
 
+	cmp bl, al ; submit write next?
+	jne .do_write_next
+
 	SubmitIo ctrl_request_write
+
+	jmp .check_write_status
+
+.do_write_next:
+	SubmitIo ctrl_request_write_next
+
+.check_write_status:
 	mov byte ah, [io_ctrl_drive_req.status]
 
 	call set_status
@@ -406,7 +435,17 @@ int13h:
 	mov bl, al ; save number of sectors to verify
 
 .verify_next_sector:
+	cmp bl, al ; submit read next?
+	jne .do_verify_next
+
 	SubmitIo ctrl_request_verify
+
+	jmp .check_verify_status
+
+.do_verify_next:
+	SubmitIo ctrl_request_verify_next
+
+.check_verify_status:
 	mov byte ah, [io_ctrl_drive_req.status]
 
 	call set_status
