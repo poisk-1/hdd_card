@@ -55,16 +55,23 @@ void  INTERRUPT_Initialize (void)
     INTCONbits.IPEN = 0;
 }
 
+extern void handle_read(void);
+extern void handle_write(void);
+
 void __interrupt() INTERRUPT_InterruptManager (void)
 {
     // interrupt handler
     if(PIE0bits.INT0IE == 1 && PIR0bits.INT0IF == 1)
     {
-        INT0_ISR();
+        //INT0_ISR();
+        EXT_INT0_InterruptFlagClear();
+        handle_read();
     }
     else if(PIE0bits.INT1IE == 1 && PIR0bits.INT1IF == 1)
     {
-        INT1_ISR();
+        //INT1_ISR();
+        EXT_INT1_InterruptFlagClear();
+        handle_write();
     }
     else if(INTCONbits.PEIE == 1)
     {

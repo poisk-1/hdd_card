@@ -51,50 +51,25 @@ static FATFS fs;
 #define DATA_BUFFER_SIZE 0x200
 
 static uint8_t ctrl_buffer[CTRL_BUFFER_SIZE];
-#if (FF_MAX_SS == DATA_BUFFER_SIZE)
-static uint8_t *data_buffer = fs.win;
-#else
-static uint8_t data_buffer[DATA_BUFFER_SIZE];
+#if (FF_MAX_SS != DATA_BUFFER_SIZE)
+#error "FF_MAX_SS must be same as DATA_BUFFER_SIZE"
 #endif
+#define data_buffer fs.win
+
+static uint8_t *buffer_segments[] = {data_buffer, &data_buffer[0x100], ctrl_buffer};
 
 void handle_read(void) {
-    size_t sel = (size_t) (PORTB & 0xf);
-    size_t address = (size_t) PORTD;
-    uint8_t data = 0;
-
-    switch (sel) {
-        case 0:
-        case 1:
-            data = data_buffer[address | ((size_t) sel << 8)];
-            break;
-        case 2:
-            data = ctrl_buffer[address];
-            break;
-    }
-
-    TRISA = 0x00;
-    PORTA = data;
-
+    PORTA = buffer_segments[PORTB & 0xf][PORTD];
+    
     ACK_IO_SetLow();
     ACK_IO_SetHigh();
 
-    TRISA = 0xff;
 }
 
 void handle_write(void) {
-    size_t sel = (size_t) (PORTB & 0xf);
-    size_t address = (size_t) PORTD;
-    uint8_t data = PORTA;
-
-    switch (sel) {
-        case 0:
-        case 1:
-            data_buffer[address | ((size_t) sel << 8)] = data;
-            break;
-        case 2:
-            ctrl_buffer[address] = data;
-            break;
-    }
+    TRISA = 0xff;
+    buffer_segments[PORTB & 0xf][PORTD] = PORTA;
+    TRISA = 0x00;
 
     ACK_IO_SetLow();
     ACK_IO_SetHigh();
@@ -406,6 +381,169 @@ static FRESULT setup_clmt(FIL *fp, DWORD *cltbl, DWORD cltbl_size) {
     return FR_OK;
 }
 
+#define SD_COMMAND_CODE_BIT_MASK (0b00111111)
+#define SD_COMMAND_TRANSMIT_BIT_MASK (1<<6)
+
+enum SD_TOKEN {
+    SD_TOKEN_START = 0xFE,
+    SD_TOKEN_START_MULTI_BLOCK = 0xFC,
+    SD_TOKEN_STOP_TRANSMISSION = 0xFD,
+    SD_TOKEN_DATA_ACCEPTED = 0x05,
+    SD_TOKEN_FLOATING_BUS = 0xFF
+};
+
+enum SD_COMMAND {
+    // Description: This macro defines the command code to reset the SD card
+    SD_COMMAND_GO_IDLE_STATE = 0,
+    // Description: This macro defines the command code to initialize the SD card
+    SD_COMMAND_SEND_OP_COND = 1,
+    // Description: This macro defined the command code to check for sector addressing
+    SD_COMMAND_SEND_IF_COND = 8,
+    // Description: This macro defines the command code to get the Card Specific Data
+    SD_COMMAND_SEND_CSD = 9,
+    // Description: This macro defines the command code to get the Card Information
+    SD_COMMAND_SEND_CID = 10,
+    // Description: This macro defines the command code to stop transmission during a multi-block read
+    SD_COMMAND_STOP_TRANSMISSION = 12,
+    // Description: This macro defines the command code to get the card status information
+    SD_COMMAND_SEND_STATUS = 13,
+    // Description: This macro defines the command code to set the block length of the card
+    SD_COMMAND_SET_BLOCK_LENGTH = 16,
+    // Description: This macro defines the command code to read one block from the card
+    SD_COMMAND_READ_SINGLE_BLOCK = 17,
+    // Description: This macro defines the command code to read multiple blocks from the card
+    SD_COMMAND_READ_MULTI_BLOCK = 18,
+    // Description: This macro defines the command code to tell the media how many blocks to pre-erase (for faster multi-block writes to follow)
+    //Note: This is an "application specific" command.  This tells the media how many blocks to pre-erase for the subsequent WRITE_MULTI_BLOCK
+    SD_COMMAND_SET_WRITE_BLOCK_ERASE_COUNT = 23,
+    // Description: This macro defines the command code to write one block to the card
+    SD_COMMAND_WRITE_SINGLE_BLOCK = 24,
+    // Description: This macro defines the command code to write multiple blocks to the card
+    SD_COMMAND_WRITE_MULTI_BLOCK = 25,
+    // Description: This macro defines the command code to set the address of the start of an erase operation
+    SD_COMMAND_TAG_SECTOR_START = 32,
+    // Description: This macro defines the command code to set the address of the end of an erase operation
+    SD_COMMAND_TAG_SECTOR_END = 33,
+    // Description: This macro defines the command code to erase all previously selected blocks
+    SD_COMMAND_ERASE = 38,
+    //Description: This macro defines the command code to initialize an SD card and provide the CSD register value.
+    //Note: this is an "application specific" command (specific to SD cards) and must be preceded by cmdAPP_CMD.
+    SD_COMMAND_SD_SEND_OP_COND = 41,
+    // Description: This macro defines the command code to begin application specific command inputs
+    SD_COMMAND_APP_CMD = 55,
+    // Description: This macro defines the command code to get the OCR register information from the card
+    SD_COMMAND_READ_OCR = 58,
+    // Description: This macro defines the command code to disable CRC checking
+    SD_COMMAND_CRC_ON_OFF = 59
+};
+
+#define SD_NCR_TIMEOUT     (uint16_t)20          //byte times before command response is expected (must be at least 8)
+#define SD_NAC_TIMEOUT     (uint32_t)0x40000     //SPI byte times we should wait when performing read operations (should be at least 100ms for SD cards)
+#define SD_WRITE_TIMEOUT   (uint32_t)0xA0000     //SPI byte times to wait before timing out when the media is performing a write operation (should be at least 250ms for SD cards).
+
+#define SD_SPI_ChipSelect() SDCard_CS_SetLow()
+#define SD_SPI_ChipDeselect() SDCard_CS_SetHigh()
+
+uint8_t wait_for_command_response() {
+    uint16_t timeout = SD_NCR_TIMEOUT;
+    uint8_t response;
+    do {
+        response = SPI1_ExchangeByte(0xFF);
+        timeout--;
+    } while ((response == SD_TOKEN_FLOATING_BUS) && (timeout != 0));
+
+    return response;
+}
+
+void wait_busy() {
+    uint32_t long_timeout = SD_WRITE_TIMEOUT;
+    uint8_t response;
+    do {
+        response = SPI1_ExchangeByte(0xFF);
+        long_timeout--;
+    } while ((response == 0x00) && (long_timeout != 0));
+}
+
+uint8_t send_command(uint8_t command, uint32_t param) {
+    (void) SPI1_ExchangeByte((command & SD_COMMAND_CODE_BIT_MASK) | SD_COMMAND_TRANSMIT_BIT_MASK);
+
+    uint8_t *param_bytes = (uint8_t *) & param;
+
+    (void) SPI1_ExchangeByte(param_bytes[3]);
+    (void) SPI1_ExchangeByte(param_bytes[2]);
+    (void) SPI1_ExchangeByte(param_bytes[1]);
+    (void) SPI1_ExchangeByte(param_bytes[0]);
+
+
+    if (command == SD_COMMAND_STOP_TRANSMISSION) {
+        (void) SPI1_ExchangeByte(0xC3); // CRC
+        (void) SPI1_ExchangeByte(0xFF); //Perform dummy read to fetch the residual non R1 byte
+    } else {
+        (void) SPI1_ExchangeByte(0xFF); // CRC
+    }
+
+    uint8_t response = wait_for_command_response();
+
+    if (command == SD_COMMAND_STOP_TRANSMISSION) {
+        wait_busy();
+    }
+
+    (void) SPI1_ExchangeByte(0xFF);
+
+    return response;
+}
+
+void start_transaction() {
+    SPI1_Open(SDFAST_CONFIG);
+    SD_SPI_ChipSelect();
+}
+
+void end_transaction() {
+    SD_SPI_ChipDeselect(); // De-select media
+    (void) SPI1_ExchangeByte(0xFF);
+
+    SPI1_Close();
+}
+
+bool start_read_sectors(uint32_t address) {
+    start_transaction();
+
+    uint8_t response = send_command(SD_COMMAND_READ_MULTI_BLOCK, address);
+    return (response == 0);
+}
+
+uint8_t wait_for_token() {
+    uint32_t long_timeout = SD_NAC_TIMEOUT;
+    uint8_t response;
+    do {
+        response = SPI1_ExchangeByte(0xFF);
+        long_timeout--;
+    } while ((response == SD_TOKEN_FLOATING_BUS) && (long_timeout != 0));
+    return response;
+}
+
+bool read_next_sector(uint8_t *buffer) {
+    uint8_t *ptr = buffer;
+    if (wait_for_token() == SD_TOKEN_START) {
+        for (size_t j = 0; j < 0x200; j++, ptr++) {
+            *ptr = SPI1_ExchangeByte(0xFF);
+        }
+
+        SPI1_ExchangeByte(0xFF);
+        SPI1_ExchangeByte(0xFF);
+
+        return true;
+    }
+
+    return false;
+}
+
+void stop_read_sectors() {
+    (void) send_command(SD_COMMAND_STOP_TRANSMISSION, 0);
+
+    end_transaction();
+}
+
 /*
                          Main application
  */
@@ -605,9 +743,19 @@ void main(void) {
 
             struct Drive* drive = NULL;
             uint32_t lba = 0;
-            DWORD sector = 0;            
+            uint32_t sector = 0;
+
+            uint32_t last_read_sector = 0;
+#define NEXT_READ_TIMEOUT 2000
+            uint32_t read_timeout = 0;
 
             while (SD_SPI_IsMediaPresent()) {
+                if (read_timeout) {
+                    if (!--read_timeout) {
+                        stop_read_sectors();
+                    }
+                }
+
                 if (ctrl->request != CTRL_REQUEST_DONE) {
                     LED_SetLow();
                     switch (ctrl->request) {
@@ -677,11 +825,48 @@ void main(void) {
                             }
                             printf("[lba=%lu]\r\n", lba);
 #endif
-                            ctrl->req.drive_req.status = (
-                                    offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
-                                    SD_SPI_SectorRead(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
 
-                            lba++;
+                            if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+                                if (read_timeout) {
+                                    if (last_read_sector + 1 == sector) {
+                                        if (read_next_sector(data_buffer)) {
+                                            last_read_sector = sector;
+                                            read_timeout = NEXT_READ_TIMEOUT;
+                                        } else {
+                                            stop_read_sectors();
+                                            read_timeout = 0;
+                                        }
+                                    } else {
+                                        stop_read_sectors();
+
+                                        if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
+                                            last_read_sector = sector;
+                                            read_timeout = NEXT_READ_TIMEOUT;
+                                        } else {
+                                            stop_read_sectors();
+                                            read_timeout = 0;
+                                        }
+                                    }
+                                } else {
+                                    if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
+                                        last_read_sector = sector;
+                                        read_timeout = NEXT_READ_TIMEOUT;
+                                    } else {
+                                        stop_read_sectors();
+                                    }
+                                }
+
+
+                                if (read_timeout) {
+                                    ctrl->req.drive_req.status = 0;
+                                    lba++;
+                                } else {
+                                    ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                }
+                            } else {
+                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                            }
+
                             break;
 
                         case CTRL_REQUEST_WRITE:
@@ -719,6 +904,12 @@ void main(void) {
                             }
                             printf("[lba=%lu]\r\n", lba);
 #endif
+
+                            if (read_timeout) {
+                                stop_read_sectors();
+                                read_timeout = 0;
+                            }
+
                             ctrl->req.drive_req.status = (
                                     offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
                                     SD_SPI_SectorWrite(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
@@ -883,6 +1074,11 @@ void main(void) {
                 if (has_image(&hard_drives[i])) {
                     f_close(&hard_drives[i].image_file);
                 }
+            }
+
+            if (read_timeout) {
+                stop_read_sectors();
+                read_timeout = 0;
             }
 
             f_mount(0, "0:", 0);
