@@ -59,17 +59,17 @@ static uint8_t ctrl_buffer[CTRL_BUFFER_SIZE];
 static uint8_t *buffer_segments[] = {data_buffer, &data_buffer[0x100], ctrl_buffer};
 
 void handle_read(void) {
+    TRISA = 0x00;
     PORTA = buffer_segments[PORTB & 0xf][PORTD];
-    
+
     ACK_IO_SetLow();
     ACK_IO_SetHigh();
 
+    TRISA = 0xff;
 }
 
 void handle_write(void) {
-    TRISA = 0xff;
     buffer_segments[PORTB & 0xf][PORTD] = PORTA;
-    TRISA = 0x00;
 
     ACK_IO_SetLow();
     ACK_IO_SetHigh();
