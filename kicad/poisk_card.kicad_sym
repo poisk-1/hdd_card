@@ -286,7 +286,7 @@
         (name "Pin_a1" (effects (font (size 1.27 1.27))))
         (number "a1" (effects (font (size 1.27 1.27))))
       )
-      (pin passive line (at -5.08 15.24 0) (length 3.81)
+      (pin input line (at -5.08 15.24 0) (length 3.81)
         (name "Pin_a10" (effects (font (size 1.27 1.27))))
         (number "a10" (effects (font (size 1.27 1.27))))
       )
