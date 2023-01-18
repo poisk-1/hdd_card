@@ -59,8 +59,8 @@
       </entry>
    </usedClasses>
    <usedLibraries class="java.util.ArrayList">
-      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.foundationservices.library.FoundationServicesLibrary" version="0.2.3"/>
       <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.mcu8.Mcu8PeripheralLibrary" version="1.82.0"/>
+      <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.foundationservices.library.FoundationServicesLibrary" version="0.2.3"/>
       <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.sdcard.SDCardLibrary" version="1.1.0"/>
       <ILibraryFile class="com.microchip.mcc.core.library.BaseLibraryFile" libraryClass="com.microchip.mcc.fatfs.FatFsLibrary" version="1.1.0"/>
    </usedLibraries>
@@ -835,7 +835,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="INTERNAL OSCILLATOR" name="CurrentPllString"/>
-         <value/>
+         <value></value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="INTERNAL OSCILLATOR" name="CurrentSystemClockInHz"/>
@@ -1195,7 +1195,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="MSSP1" name="ActI2cClkSpeed"/>
-         <value/>
+         <value></value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="MSSP1" name="ActSpiClkSpeed"/>
@@ -2451,7 +2451,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="Custom Name RE2"/>
-         <value>IRQ_DONE</value>
+         <value>REQ_COMPLETE</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="Custom Name RE3"/>
@@ -2466,15 +2466,15 @@
          <value>disabled</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT0PPS%aux0"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT0PPS%aux1"/>
          <value>12</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT1PPS%aux1"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT1PPS%aux2"/>
          <value>13</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT2PPS%aux2"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="INT2PPS%aux3"/>
          <value>%DESELECT%</value>
       </entry>
       <entry>
@@ -2626,7 +2626,7 @@
          <value>disabled</value>
       </entry>
       <entry>
-         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="RXPPS%aux3"/>
+         <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="RXPPS%aux0"/>
          <value>23</value>
       </entry>
       <entry>
@@ -2843,7 +2843,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="customNameUserSet RB4"/>
-         <value>enabled</value>
+         <value>disabled</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="Pin Module" name="customNameUserSet RB5"/>
@@ -8059,7 +8059,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SD Card (SPI)" name="WPPinKey"/>
-         <value/>
+         <value></value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SD Card (SPI)" name="WPPolarityKey"/>
@@ -8075,11 +8075,11 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="pubSubSPIMASTERConfigurations"/>
-         <value>2077.245349595256</value>
+         <value>6734.939765817948</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="pubSubspiSubscriber"/>
-         <value>4950.687574540044</value>
+         <value>801.6699015362483</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="spiSubscriber"/>
@@ -8091,7 +8091,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="SPIMASTER" name="validate"/>
-         <value>0.6198398918914028</value>
+         <value>0.792156274809176</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.PropertyTokenKey" moduleName="SPIMASTER" name="spiConfigurations%0%dataInputSample"/>
@@ -8775,7 +8775,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="UART" name="pubSubUARTConfigurations"/>
-         <value>7274.539792020187</value>
+         <value>602.2905028525538</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="UART" name="usecaseComboSettings"/>
@@ -8783,7 +8783,7 @@
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.CustomKey" moduleName="UART" name="validate"/>
-         <value>0.8340198123195913</value>
+         <value>0.5504074195776907</value>
       </entry>
       <entry>
          <key class="com.microchip.mcc.core.tokenManager.PropertyTokenKey" moduleName="UART" name="uartConfigurationList%0%interruptState"/>
@@ -8868,12 +8868,12 @@
          <hash>7bf2730d6b6763db5ad7ebae1942ca6da4b857f9e1f47c16ec741625edf077ba</hash>
       </entry>
       <entry>
-         <file>mcc_generated_files/docs/spi_basic.dox</file>
-         <hash>a44690903480f96ed2a8a1605d29c339aca8ac9770e946ae77260a559aa40a6a</hash>
-      </entry>
-      <entry>
          <file>mcc_generated_files/spi1.h</file>
          <hash>f65e6cbd073da29c5b6858fb9a7d84e921af9a4c467d9950ac6ada2c870a0608</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/docs/spi_basic.dox</file>
+         <hash>a44690903480f96ed2a8a1605d29c339aca8ac9770e946ae77260a559aa40a6a</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/fatfs/ffsystem.c</file>
@@ -8884,20 +8884,20 @@
          <hash>d4b482871ee606a0e7b2b1f7d9f588a85f079bc9a6573970c39ac049d0a35d19</hash>
       </entry>
       <entry>
-         <file>mcc_generated_files/eusart1.c</file>
-         <hash>6d110805c3afb34fa1de3d0ea814bd342aac129b6ea6eb73c57a17872ac08fd7</hash>
-      </entry>
-      <entry>
          <file>mcc_generated_files/mcc.h</file>
          <hash>4bec8537d6b6964bb38b9e5f1d58d4d8aa31e91c6ce9ec8a35a1355c4a209b0d</hash>
       </entry>
       <entry>
-         <file>mcc_generated_files/interrupt_manager.c</file>
-         <hash>8db31dcb646b9da94e5004521dcc205653d016937eedd31b07c0cc2edf86559f</hash>
+         <file>mcc_generated_files/eusart1.c</file>
+         <hash>6d110805c3afb34fa1de3d0ea814bd342aac129b6ea6eb73c57a17872ac08fd7</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/docs/spi.dox</file>
          <hash>518908892e2d8bc846cfc4b846e70d96c4f59fab7dbddc55fadee679aeaa9697</hash>
+      </entry>
+      <entry>
+         <file>mcc_generated_files/interrupt_manager.c</file>
+         <hash>8db31dcb646b9da94e5004521dcc205653d016937eedd31b07c0cc2edf86559f</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/mcc.c</file>
@@ -8909,7 +8909,7 @@
       </entry>
       <entry>
          <file>mcc_generated_files/pin_manager.h</file>
-         <hash>2508b4e868ae3e209602167171246b93420e135b29d761b5581daac19404f93b</hash>
+         <hash>f3f57c8d5d9ce6f40fa8d7dbe6473cb0ed5a44dda22097317b67c752098b0a82</hash>
       </entry>
       <entry>
          <file>mcc_generated_files/fatfs/ffunicode.c</file>

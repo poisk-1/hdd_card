@@ -629,25 +629,25 @@
 #define ACK_IO_SetAnalogMode()      do { ANSELEbits.ANSELE1 = 1; } while(0)
 #define ACK_IO_SetDigitalMode()     do { ANSELEbits.ANSELE1 = 0; } while(0)
 
-// get/set IRQ_DONE aliases
-#define IRQ_DONE_TRIS                 TRISEbits.TRISE2
-#define IRQ_DONE_LAT                  LATEbits.LATE2
-#define IRQ_DONE_PORT                 PORTEbits.RE2
-#define IRQ_DONE_WPU                  WPUEbits.WPUE2
-#define IRQ_DONE_OD                   ODCONEbits.ODCE2
-#define IRQ_DONE_ANS                  ANSELEbits.ANSELE2
-#define IRQ_DONE_SetHigh()            do { LATEbits.LATE2 = 1; } while(0)
-#define IRQ_DONE_SetLow()             do { LATEbits.LATE2 = 0; } while(0)
-#define IRQ_DONE_Toggle()             do { LATEbits.LATE2 = ~LATEbits.LATE2; } while(0)
-#define IRQ_DONE_GetValue()           PORTEbits.RE2
-#define IRQ_DONE_SetDigitalInput()    do { TRISEbits.TRISE2 = 1; } while(0)
-#define IRQ_DONE_SetDigitalOutput()   do { TRISEbits.TRISE2 = 0; } while(0)
-#define IRQ_DONE_SetPullup()          do { WPUEbits.WPUE2 = 1; } while(0)
-#define IRQ_DONE_ResetPullup()        do { WPUEbits.WPUE2 = 0; } while(0)
-#define IRQ_DONE_SetPushPull()        do { ODCONEbits.ODCE2 = 0; } while(0)
-#define IRQ_DONE_SetOpenDrain()       do { ODCONEbits.ODCE2 = 1; } while(0)
-#define IRQ_DONE_SetAnalogMode()      do { ANSELEbits.ANSELE2 = 1; } while(0)
-#define IRQ_DONE_SetDigitalMode()     do { ANSELEbits.ANSELE2 = 0; } while(0)
+// get/set REQ_COMPLETE aliases
+#define REQ_COMPLETE_TRIS                 TRISEbits.TRISE2
+#define REQ_COMPLETE_LAT                  LATEbits.LATE2
+#define REQ_COMPLETE_PORT                 PORTEbits.RE2
+#define REQ_COMPLETE_WPU                  WPUEbits.WPUE2
+#define REQ_COMPLETE_OD                   ODCONEbits.ODCE2
+#define REQ_COMPLETE_ANS                  ANSELEbits.ANSELE2
+#define REQ_COMPLETE_SetHigh()            do { LATEbits.LATE2 = 1; } while(0)
+#define REQ_COMPLETE_SetLow()             do { LATEbits.LATE2 = 0; } while(0)
+#define REQ_COMPLETE_Toggle()             do { LATEbits.LATE2 = ~LATEbits.LATE2; } while(0)
+#define REQ_COMPLETE_GetValue()           PORTEbits.RE2
+#define REQ_COMPLETE_SetDigitalInput()    do { TRISEbits.TRISE2 = 1; } while(0)
+#define REQ_COMPLETE_SetDigitalOutput()   do { TRISEbits.TRISE2 = 0; } while(0)
+#define REQ_COMPLETE_SetPullup()          do { WPUEbits.WPUE2 = 1; } while(0)
+#define REQ_COMPLETE_ResetPullup()        do { WPUEbits.WPUE2 = 0; } while(0)
+#define REQ_COMPLETE_SetPushPull()        do { ODCONEbits.ODCE2 = 0; } while(0)
+#define REQ_COMPLETE_SetOpenDrain()       do { ODCONEbits.ODCE2 = 1; } while(0)
+#define REQ_COMPLETE_SetAnalogMode()      do { ANSELEbits.ANSELE2 = 1; } while(0)
+#define REQ_COMPLETE_SetDigitalMode()     do { ANSELEbits.ANSELE2 = 0; } while(0)
 
 /**
    @Param

@@ -39,6 +39,20 @@ boot_sector_size equ 0x200
 boot_sector_signature_offset equ (boot_sector_offset + boot_sector_size - 2)
 boot_sector_signature equ 0xaa55
 
+bios_data_segment equ 0x40
+
+diskette_motor_status equ 0x3f
+
+diskette_motor_status_ready equ 0x00
+diskette_motor_status_busy equ 0x11
+
+diskette_status equ 0x41
+
+int_req_complete_n equ 0xa ; irq #2
+
+ctrl_status_ready:                  equ 0x00
+ctrl_status_busy:                   equ 0xff
+
 ctrl_request_done:                  equ 0x00
 ctrl_request_check:                 equ 0x01
 ctrl_request_scan:                  equ 0x02
@@ -55,22 +69,23 @@ ctrl_request_detect_media_change:   equ 0x0c
 
 io_offset: equ 0x1000 ; reserve 4K for BIOS
 
-struc io_data, io_offset
-	.buffer resb 0x200
-endstruc
-
-struc io_ctrl, io_offset + io_data_size
+struc io_ctrl, io_offset
+	.status resb 1
 	.request resb 1
 endstruc
 
-io_ctrl_req_offset: equ io_offset + io_data_size + io_ctrl_size
+io_ctrl_req_offset: equ io_offset + io_ctrl_size
 
-struc io_ctrl_drive_req, io_ctrl_req_offset
-	.status resb 1
+struc io_ctrl_rvw_req, io_ctrl_req_offset
 	.low_cylinder_number resb 1
 	.sector_and_high_cylinder_numbers resb 1
 	.head_number resb 1
 	.drive_number resb 1
+
+	.sectors_count resb 1
+
+	.status resb 1
+	.sectors_last_rv_next_w_count resb 1
 endstruc
 
 struc io_ctrl_scan_req, io_ctrl_req_offset
@@ -104,27 +119,28 @@ struc io_ctrl_detect_media_change_req, io_ctrl_req_offset
     .status resb 1
 endstruc
 
+io_ctrl_buffer_size: equ 0x100
+
+io_data: equ io_offset + io_ctrl_buffer_size
+io_data_size: equ 0x200
+
+	; DS must point to IO memory
 %macro SubmitIo 1
+	push ax
+	push es
+
+	mov ax, bios_data_segment
+	mov es, ax ; ES to point to BIOS data
+
+	mov byte [es:diskette_motor_status], diskette_motor_status_busy ; set motor status to busy
 	mov byte [io_ctrl.request], %1
 
-	cmp byte [io_ctrl.request], ctrl_request_done
-	je %%done
-
-	push cx
-	mov cx, 0x100
 %%wait:
-	push cx
-%%delay:
-	loop %%delay
-	pop cx
-	cmp cx, 0x10
-	je %%min_delay
-	shr cx, 1
-%%min_delay:
-	cmp byte [io_ctrl.request], ctrl_request_done
+	cmp byte [es:diskette_motor_status], diskette_motor_status_ready ; wait until request complete interrupt set motor status to ready
 	jne %%wait
-	pop cx
-%%done:
+
+	pop es
+	pop ax
 %endmacro
 
 section .text
@@ -146,6 +162,8 @@ entry:
 
 	DisplayString `Poisk HDD card version 0.1\r\n`
 	DisplayString `Copyright (c) 2022-2023 Peter Hizalev\r\n\r\n`
+
+	InstallISR int_req_complete_n, int_req_complete
 
 	mov ax, cs
 	mov ds, ax ; DS to point to IO memory
@@ -292,10 +310,10 @@ int13h:
 	; Returns:
 	; AH - status
 .reset:
-	mov byte [io_ctrl_drive_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.drive_number], dl
 
 	SubmitIo ctrl_request_reset
-	mov byte ah, [io_ctrl_drive_req.status]
+	mov byte ah, [io_ctrl_rvw_req.status]
 
 	call set_status
 
@@ -320,48 +338,46 @@ int13h:
 
 	mov di, bx ; make DI point to the beginning of the read buffer
 
-	mov byte [io_ctrl_drive_req.low_cylinder_number], ch
-	mov byte [io_ctrl_drive_req.sector_and_high_cylinder_numbers], cl
-	mov byte [io_ctrl_drive_req.head_number], dh
-	mov byte [io_ctrl_drive_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.low_cylinder_number], ch
+	mov byte [io_ctrl_rvw_req.sector_and_high_cylinder_numbers], cl
+	mov byte [io_ctrl_rvw_req.head_number], dh
+	mov byte [io_ctrl_rvw_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.sectors_count], al
 
-	mov bl, al ; save number of sectors to read
-
-.read_next_sector:
-	cmp bl, al ; submit read next?
-	jne .do_read_next
+	sub al, al ; reset total number of read sectors
 
 	SubmitIo ctrl_request_read
-	
-	jmp .check_read_status
 
-.do_read_next:
-	SubmitIo ctrl_request_read_next
-
-.check_read_status:
-	mov byte ah, [io_ctrl_drive_req.status]
+.read_next:
+	mov byte ah, [io_ctrl_rvw_req.status]
 
 	call set_status
 
 	cmp ah, 0 ; has read error occured?
-	jne .read_error
+	jne .return_error
+
+	mov byte bl, [io_ctrl_rvw_req.sectors_last_rv_next_w_count]
+	add al, bl ; add number sectors read in the last IO
 
 	mov si, io_data ; make SI to point to the beginning of the IO buffer
-	mov cx, io_data_size
+
+	push ax
+	sub ax, ax
+	mov al, bl ; AL = sectors read in the last IO
+	mov cl, 9 ; 512 bytes sector
+	shl ax, cl
+	mov cx, ax ; CX = bytes read in the last IO
+	pop ax
+
 	rep movsb ; copy data bytes from IO buffer (DS:SI) to read buffer (ES:DI)
 
-	dec al
-	jnz .read_next_sector
+	cmp byte [io_ctrl_rvw_req.sectors_count], 0
+	je .return_success
 
-	mov al, bl ; all sectors read
+	SubmitIo ctrl_request_read_next
 
-	jmp .return_success
+	jmp .read_next
 
-.read_error:
-	sub bl, al ; some sectors read
-	mov al, bl
-
-	jmp .return_error
 
 	; AL - number of sectors to write
 	; CH, CL, DH, DL - CSHD address of first sector
@@ -372,16 +388,39 @@ int13h:
 .write:
 	mov si, bx ; make SI point to the beginning of the write buffer
 
-	mov byte [io_ctrl_drive_req.low_cylinder_number], ch
-	mov byte [io_ctrl_drive_req.sector_and_high_cylinder_numbers], cl
-	mov byte [io_ctrl_drive_req.head_number], dh
-	mov byte [io_ctrl_drive_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.low_cylinder_number], ch
+	mov byte [io_ctrl_rvw_req.sector_and_high_cylinder_numbers], cl
+	mov byte [io_ctrl_rvw_req.head_number], dh
+	mov byte [io_ctrl_rvw_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.sectors_count], al
 
-	mov bl, al ; save number of sectors to write
+	sub al, al ; reset total number of written sectors
+	sub bl, bl ; reset number sectors written in the last IO
 
-.write_next_sector:
+	SubmitIo ctrl_request_write
+
+.write_next:
+	mov byte ah, [io_ctrl_rvw_req.status]
+
+	call set_status
+
+	cmp ah, 0 ; has read error occured?
+	jne .return_error
+
+	add al, bl ; add number sectors writtem in the last IO
+	mov byte bl, [io_ctrl_rvw_req.sectors_last_rv_next_w_count]
+	cmp bl, 0 ; nothing remaining to write?
+	je .return_success
+
 	mov di, io_data ; make DI to point to the beginning of the IO buffer
-	mov cx, io_data_size
+
+	push ax
+	sub ax, ax
+	mov al, bl ; AL = sectors to write in the next IO
+	mov cl, 9 ; 512 bytes sector
+	shl ax, cl
+	mov cx, ax ; CX = bytes to write in the next IO
+	pop ax
 
 	push es
 	push ds
@@ -395,76 +434,37 @@ int13h:
 	pop es
 	pop ds ; swap DS and ES
 
-	cmp bl, al ; submit write next?
-	jne .do_write_next
-
-	SubmitIo ctrl_request_write
-
-	jmp .check_write_status
-
-.do_write_next:
 	SubmitIo ctrl_request_write_next
 
-.check_write_status:
-	mov byte ah, [io_ctrl_drive_req.status]
-
-	call set_status
-
-	cmp ah, 0 ; has read error occured?
-	jne .write_error
-
-	dec al
-	jnz .write_next_sector
-
-	mov al, bl ; all sectors read
-
-	jmp .return_success
-
-.write_error:
-	sub bl, al ; some sectors read
-	mov al, bl
-
-	jmp .return_error
+	jmp .write_next
 
 .verify:
-	mov byte [io_ctrl_drive_req.low_cylinder_number], ch
-	mov byte [io_ctrl_drive_req.sector_and_high_cylinder_numbers], cl
-	mov byte [io_ctrl_drive_req.head_number], dh
-	mov byte [io_ctrl_drive_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.low_cylinder_number], ch
+	mov byte [io_ctrl_rvw_req.sector_and_high_cylinder_numbers], cl
+	mov byte [io_ctrl_rvw_req.head_number], dh
+	mov byte [io_ctrl_rvw_req.drive_number], dl
+	mov byte [io_ctrl_rvw_req.sectors_count], al
 
-	mov bl, al ; save number of sectors to verify
-
-.verify_next_sector:
-	cmp bl, al ; submit read next?
-	jne .do_verify_next
+	sub al, al ; reset number of verified sectors
 
 	SubmitIo ctrl_request_verify
 
-	jmp .check_verify_status
-
-.do_verify_next:
-	SubmitIo ctrl_request_verify_next
-
-.check_verify_status:
-	mov byte ah, [io_ctrl_drive_req.status]
+.verify_next:
+	mov byte ah, [io_ctrl_rvw_req.status]
+	mov byte bl, [io_ctrl_rvw_req.sectors_last_rv_next_w_count]
+	add al, bl ; add number sectors verified in the last IO
 
 	call set_status
 
 	cmp ah, 0 ; has verification error occured?
-	jne .verify_error
+	jne .return_error
 
-	dec al
-	jnz .verify_next_sector
+	cmp byte [io_ctrl_rvw_req.sectors_count], 0
+	je .return_success
 
-	mov al, bl ; all sectors verified
+	SubmitIo ctrl_request_verify_next
 
-	jmp .return_success
-
-.verify_error:
-	sub bl, al ; some sectors verified
-	mov al, bl
-
-	jmp .return_error
+	jmp .verify_next
 
 .empty:
 	mov ah, 0
@@ -558,10 +558,10 @@ int13h:
 set_status:
 	push ds
 	push ax
-	mov ax, 0x40
+	mov ax, bios_data_segment
 	mov ds, ax
 	pop ax
-	mov [0x41], ah
+	mov [diskette_status], ah
 	pop ds
 	ret
 
@@ -570,10 +570,10 @@ set_status:
 get_status:
 	push ds
 	push ax
-	mov ax, 0x40
+	mov ax, bios_data_segment
 	mov ds, ax
 	pop ax
-	mov al, [0x41]
+	mov al, [diskette_status]
 	pop ds
 	ret
 
@@ -585,7 +585,7 @@ install_bios_data:
 	push bx
 	push cx
 
-	mov bx, 0x40
+	mov bx, bios_data_segment
 	mov ds, bx	
 
 	mov [0x75], ah ; number of hard drives
@@ -620,7 +620,7 @@ int19h:
 	sti
 	cld	
 
-	mov ax, 0x40
+	mov ax, bios_data_segment
 	mov ds, ax
 
 	mov ax, 0
@@ -715,6 +715,42 @@ int19h:
 	loop .retry_read
 .return_success:
 	ret
+
+int_req_complete:
+	sti
+	push ax
+	push ds
+
+	mov ax, bios_data_segment
+	mov ds, ax ; DS to point to BIOS data
+
+	cmp byte [diskette_motor_status], diskette_motor_status_busy
+	jne .ignore ; only acknowledge if motor status is busy and IO ctrl status is ready
+	            ; otherwise the interrupt is spurious
+
+	push ds ; Save DS pointing to BIOS data
+
+	mov ax, cs
+	mov ds, ax ; DS to point to IO memory
+
+	cmp byte [io_ctrl.status], ctrl_status_ready	
+	jne .ignore2 ; see jne above
+
+	mov byte [io_ctrl.request], ctrl_request_done ; acknowledge request complete interrupt
+
+.ignore2:
+	pop ds ; Restore DS pointing to BIOS data
+
+	mov byte [diskette_motor_status], diskette_motor_status_ready ; set the motor status to ready
+
+.ignore:
+	mov al, 0x20
+	out 0x20, al ; acknowledge EOI with PIC
+
+	pop ds
+	pop ax
+
+	iret
 
 delay:
 	push cx

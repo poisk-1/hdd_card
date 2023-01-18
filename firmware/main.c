@@ -56,14 +56,17 @@ static uint8_t ctrl_buffer[CTRL_BUFFER_SIZE];
 #endif
 #define data_buffer fs.win
 
-static uint8_t *buffer_segments[] = {data_buffer, &data_buffer[0x100], ctrl_buffer};
+//static uint8_t data_buffer_1[DATA_BUFFER_SIZE];
+
+static uint8_t *buffer_segments[] = {ctrl_buffer, data_buffer, &data_buffer[0x100]};
+
+#define ACK_IO_Strobe() {ACK_IO_SetLow();ACK_IO_SetHigh();}
 
 void handle_read(void) {
     TRISA = 0x00;
     PORTA = buffer_segments[PORTB & 0xf][PORTD];
 
-    ACK_IO_SetLow();
-    ACK_IO_SetHigh();
+    ACK_IO_Strobe();
 
     TRISA = 0xff;
 }
@@ -71,8 +74,7 @@ void handle_read(void) {
 void handle_write(void) {
     buffer_segments[PORTB & 0xf][PORTD] = PORTA;
 
-    ACK_IO_SetLow();
-    ACK_IO_SetHigh();
+    ACK_IO_Strobe();
 }
 
 enum Request {
@@ -91,6 +93,11 @@ enum Request {
     CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0xc,
 };
 
+enum Status {
+    CTRL_STATUS_READY = 0,
+    CTRL_STATUS_BUSY = 0xff
+};
+
 enum DriveReqStatus {
     STATUS_NO_ERROR = 0,
     STATUS_BAD_SECTOR = 0x2,
@@ -105,13 +112,16 @@ void invert_data_buffer() {
     }
 }
 
-struct DriveReq {
-    uint8_t status;
-
+struct RWVReq {
     uint8_t low_cylinder_number;
     uint8_t sector_and_high_cylinder_numbers;
     uint8_t head_number;
     uint8_t drive_number;
+
+    uint8_t sectors_count;
+
+    uint8_t status;
+    uint8_t sectors_last_rv_next_w_count;
 };
 
 struct ScanReq {
@@ -146,7 +156,7 @@ struct DetectMediaChangeReq {
 };
 
 union Req {
-    struct DriveReq drive_req;
+    struct RWVReq rwv_req;
     struct ScanReq scan_req;
     struct ReadParamsFun8hReq read_params_fun8h_req;
     struct ReadParamsFun15hReq read_params_fun15h_req;
@@ -154,6 +164,7 @@ union Req {
 };
 
 struct Ctrl {
+    uint8_t status;
     uint8_t request;
     union Req req;
 };
@@ -196,7 +207,7 @@ struct Drive floppy_drives[MAX_NUMBER_FLOPPY_DRIVES];
 struct Drive hard_drives[MAX_NUMBER_HARD_DRIVES];
 
 #define FLOPPY_IMAGE_FILE_CLTBL_SIZE 8
-#define HARD_IMAGE_FILE_CLTBL_SIZE 64
+#define HARD_IMAGE_FILE_CLTBL_SIZE 16
 
 DWORD floppy_image_file_cltbl[MAX_NUMBER_FLOPPY_DRIVES][FLOPPY_IMAGE_FILE_CLTBL_SIZE];
 DWORD hard_image_file_cltbl[MAX_NUMBER_HARD_DRIVES][HARD_IMAGE_FILE_CLTBL_SIZE];
@@ -289,7 +300,7 @@ struct Drive* find_drive(uint8_t drive_number) {
 #define HIGH_CYLINDER_NUMBER_MASK ((uint8_t)0xc0)
 #define SECTOR_NUMBER_MASK ((uint8_t)~HIGH_CYLINDER_NUMBER_MASK)
 
-bool chs_to_lba(const struct Drive* drive, const struct DriveReq* disk_req, uint32_t *lba) {
+bool chs_to_lba(const struct Drive* drive, const struct RWVReq* disk_req, uint32_t *lba) {
     uint32_t cylinder_number =
             (uint32_t) disk_req->low_cylinder_number |
             (((uint32_t) disk_req->sector_and_high_cylinder_numbers & HIGH_CYLINDER_NUMBER_MASK) << HIGH_CYLINDER_BITS);
@@ -550,7 +561,6 @@ void stop_read_sectors() {
 void main(void) {
     // Initialize the device
     SYSTEM_Initialize();
-    ACK_IO_SetHigh();
     INT0_SetInterruptHandler(handle_read);
     INT1_SetInterruptHandler(handle_write);
 
@@ -572,6 +582,8 @@ void main(void) {
 
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
+    
+    ACK_IO_Strobe();
 
     while (1) {
         if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
@@ -757,6 +769,7 @@ void main(void) {
                 }
 
                 if (ctrl->request != CTRL_REQUEST_DONE) {
+                    ctrl->status = CTRL_STATUS_BUSY;
                     LED_SetLow();
                     switch (ctrl->request) {
                         case CTRL_REQUEST_CHECK:
@@ -790,30 +803,31 @@ void main(void) {
 
                         case CTRL_REQUEST_RESET:
 #ifdef DEBUG
-                            printf("RESET[d=%d]\r\n", ctrl->req.drive_req.drive_number);
+                            printf("RESET[d=%d]\r\n", ctrl->req.rwv_req.drive_number);
 #endif
-                            ctrl->req.drive_req.status = 0;
+                            ctrl->req.rwv_req.status = 0;
 
                             break;
 
                         case CTRL_REQUEST_READ:
-                            drive = find_drive(ctrl->req.drive_req.drive_number);
+                            drive = find_drive(ctrl->req.rwv_req.drive_number);
 
 #ifdef DEBUG
                             printf(
-                                    "READ[d=%d,lc=%d,h=%d,shc=%d]",
-                                    ctrl->req.drive_req.drive_number,
-                                    ctrl->req.drive_req.low_cylinder_number,
-                                    ctrl->req.drive_req.head_number,
-                                    ctrl->req.drive_req.sector_and_high_cylinder_numbers
+                                    "READ[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
+                                    ctrl->req.rwv_req.drive_number,
+                                    ctrl->req.rwv_req.low_cylinder_number,
+                                    ctrl->req.rwv_req.head_number,
+                                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                                    ctrl->req.rwv_req.sectors_count
                                     );
 #endif
 
-                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba))) {
+                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba))) {
 #ifdef DEBUG
-                                printf("[bad sector]\r\n");
+                                printf("[no lba]\r\n");
 #endif
-                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                                 break;
                             }
 
@@ -821,88 +835,132 @@ void main(void) {
                         case CTRL_REQUEST_READ_NEXT:
 #ifdef DEBUG
                             if (ctrl->request == CTRL_REQUEST_READ_NEXT) {
-                                printf("READ_NEXT");
+                                printf("READ_NEXT[lct=%d,sct=%d]",
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                        ctrl->req.rwv_req.sectors_count);
                             }
-                            printf("[lba=%lu]\r\n", lba);
 #endif
+                            ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
 
-                            if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
-                                if (read_timeout) {
-                                    if (last_read_sector + 1 == sector) {
-                                        if (read_next_sector(data_buffer)) {
-                                            last_read_sector = sector;
-                                            read_timeout = NEXT_READ_TIMEOUT;
+                            if (ctrl->req.rwv_req.sectors_count != 0) {
+                                if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+                                    if (read_timeout) {
+                                        if (last_read_sector + 1 == sector) {
+                                            if (read_next_sector(data_buffer)) {
+                                                last_read_sector = sector;
+                                                read_timeout = NEXT_READ_TIMEOUT;
+                                            } else {
+                                                stop_read_sectors();
+                                                read_timeout = 0;
+                                            }
                                         } else {
                                             stop_read_sectors();
-                                            read_timeout = 0;
+
+                                            if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
+                                                last_read_sector = sector;
+                                                read_timeout = NEXT_READ_TIMEOUT;
+                                            } else {
+                                                stop_read_sectors();
+                                                read_timeout = 0;
+                                            }
                                         }
                                     } else {
-                                        stop_read_sectors();
-
                                         if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
                                             last_read_sector = sector;
                                             read_timeout = NEXT_READ_TIMEOUT;
                                         } else {
                                             stop_read_sectors();
-                                            read_timeout = 0;
                                         }
                                     }
-                                } else {
-                                    if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
-                                        last_read_sector = sector;
-                                        read_timeout = NEXT_READ_TIMEOUT;
+
+
+                                    if (read_timeout) {
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
+                                        ctrl->req.rwv_req.sectors_count--;
+
+#ifdef DEBUG
+                                        printf("[lba=%lu,lct=%d,sct=%d]\r\n",
+                                                lba,
+                                                ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                                ctrl->req.rwv_req.sectors_count);
+#endif
+
+                                        lba++;
+                                        ctrl->req.rwv_req.status = 0;
                                     } else {
-                                        stop_read_sectors();
+#ifdef DEBUG
+                                        printf("[read error]\r\n");
+#endif
+                                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                                     }
-                                }
-
-
-                                if (read_timeout) {
-                                    ctrl->req.drive_req.status = 0;
-                                    lba++;
                                 } else {
-                                    ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+#ifdef DEBUG
+                                    printf("[no sector]\r\n");
+#endif
+                                    ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                                 }
                             } else {
-                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+#ifdef DEBUG
+                                printf("[nothing to read]\r\n");
+#endif
+                                ctrl->req.rwv_req.status = 0;
+                                break;
                             }
 
                             break;
 
                         case CTRL_REQUEST_WRITE:
-                            drive = find_drive(ctrl->req.drive_req.drive_number);
+                            drive = find_drive(ctrl->req.rwv_req.drive_number);
 #ifdef DEBUG
                             printf(
-                                    "WRITE[d=%d,lc=%d,h=%d,shc=%d]",
-                                    ctrl->req.drive_req.drive_number,
-                                    ctrl->req.drive_req.low_cylinder_number,
-                                    ctrl->req.drive_req.head_number,
-                                    ctrl->req.drive_req.sector_and_high_cylinder_numbers
+                                    "WRITE[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
+                                    ctrl->req.rwv_req.drive_number,
+                                    ctrl->req.rwv_req.low_cylinder_number,
+                                    ctrl->req.rwv_req.head_number,
+                                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                                    ctrl->req.rwv_req.sectors_count
                                     );
 #endif
 
-                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba)) {
+                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba)) {
                                 if (drive->read_only) {
 #ifdef DEBUG
                                     printf("[write protected]\r\n");
 #endif
-                                    ctrl->req.drive_req.status = STATUS_WRITE_PROTECTED;
-                                    break;
+                                    ctrl->req.rwv_req.status = STATUS_WRITE_PROTECTED;
+                                } else {
+                                    ctrl->req.rwv_req.status = 0;
+                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
+                                    if (ctrl->req.rwv_req.sectors_count != 0) {
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
+                                        ctrl->req.rwv_req.sectors_count--;
+
+#ifdef DEBUG
+                                        printf("[nct=%d,sct=%d]\r\n",
+                                                ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                                ctrl->req.rwv_req.sectors_count);
+#endif
+
+                                    } else {
+#ifdef DEBUG
+                                        printf("[nothing to write]\r\n");
+#endif                                        
+                                    }
                                 }
                             } else {
 #ifdef DEBUG
-                                printf("[bad sector]\r\n");
+                                printf("[no lba]\r\n");
 #endif
-                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
-                                break;
+                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                             }
+
+                            break;
 
                         case CTRL_REQUEST_WRITE_NEXT:
 #ifdef DEBUG
-                            if (ctrl->request == CTRL_REQUEST_WRITE_NEXT) {
-                                printf("WRITE_NEXT");
-                            }
-                            printf("[lba=%lu]\r\n", lba);
+                            printf("WRITE_NEXT[nct=%d,sct=%d]",
+                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                    ctrl->req.rwv_req.sectors_count);
 #endif
 
                             if (read_timeout) {
@@ -910,44 +968,111 @@ void main(void) {
                                 read_timeout = 0;
                             }
 
-                            ctrl->req.drive_req.status = (
-                                    offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK &&
-                                    SD_SPI_SectorWrite(sector, data_buffer, 1)) ? 0 : STATUS_BAD_SECTOR;
+                            if (ctrl->req.rwv_req.sectors_last_rv_next_w_count == 0) {
+#ifdef DEBUG
+                                printf("[nothing to write]\r\n");
+#endif                                        
 
-                            lba++;
+                                ctrl->req.rwv_req.status = 0;
+                            } else {
+                                ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
+
+                                if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+                                    if (SD_SPI_SectorWrite(sector, data_buffer, 1)) {
+                                        if (ctrl->req.rwv_req.sectors_count != 0) {
+                                            ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
+                                            ctrl->req.rwv_req.sectors_count--;
+                                        }
+
+#ifdef DEBUG
+                                        printf("[lba=%lu,nct=%d,sct=%d]\r\n",
+                                                lba,
+                                                ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                                ctrl->req.rwv_req.sectors_count);
+#endif
+
+                                        lba++;
+                                        ctrl->req.rwv_req.status = 0;
+                                    } else {
+#ifdef DEBUG
+                                        printf("[write error]\r\n");
+#endif                                        
+
+                                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+
+                                    }
+                                } else {
+#ifdef DEBUG
+                                    printf("[no sector]\r\n");
+#endif                                        
+
+                                    ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                                }
+                            }
+
                             break;
 
                         case CTRL_REQUEST_VERIFY:
-                            drive = find_drive(ctrl->req.drive_req.drive_number);
+                            drive = find_drive(ctrl->req.rwv_req.drive_number);
 #ifdef DEBUG
                             printf(
-                                    "VERIFY[d=%d,lc=%d,h=%d,shc=%d]",
-                                    ctrl->req.drive_req.drive_number,
-                                    ctrl->req.drive_req.low_cylinder_number,
-                                    ctrl->req.drive_req.head_number,
-                                    ctrl->req.drive_req.sector_and_high_cylinder_numbers
+                                    "VERIFY[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
+                                    ctrl->req.rwv_req.drive_number,
+                                    ctrl->req.rwv_req.low_cylinder_number,
+                                    ctrl->req.rwv_req.head_number,
+                                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                                    ctrl->req.rwv_req.sectors_count
                                     );
 #endif
 
-                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.drive_req, &lba))) {
+                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba))) {
 #ifdef DEBUG
-                                printf("[bad sector]\r\n");
+                                printf("[no lba]\r\n");
 #endif
-                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                                 break;
                             }
 
                         case CTRL_REQUEST_VERIFY_NEXT:
 #ifdef DEBUG
                             if (ctrl->request == CTRL_REQUEST_VERIFY_NEXT) {
-                                printf("WRITE_NEXT");
+                                printf("VERIFY_NEXT[lct=%d,sct=%d]",
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                        ctrl->req.rwv_req.sectors_count);
                             }
-                            printf("[lba=%lu]\r\n", lba);
 #endif
-                            ctrl->req.drive_req.status =
-                                    offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK
-                                    ? 0 : STATUS_BAD_SECTOR;
-                            lba++;
+                            ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
+
+                            if (ctrl->req.rwv_req.sectors_count != 0) {
+                                if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+
+                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
+                                    ctrl->req.rwv_req.sectors_count--;
+
+#ifdef DEBUG
+                                    printf("[lba=%lu,lct=%d,sct=%d]\r\n",
+                                            lba,
+                                            ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                            ctrl->req.rwv_req.sectors_count);
+#endif
+
+                                    lba++;
+
+                                    ctrl->req.rwv_req.status = 0;
+                                } else {
+#ifdef DEBUG
+                                    printf("[no sector]\r\n");
+#endif
+                                    ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                                }
+                            } else {
+#ifdef DEBUG
+                                printf("[nothing to verify]\r\n");
+#endif
+
+                                ctrl->req.rwv_req.status = 0;
+                            }
+
                             break;
 
                         case CTRL_REQUEST_READ_PARAMS_FUN8H:
@@ -1048,7 +1173,7 @@ void main(void) {
                                     ctrl->req.detect_media_change.status = 0;
                                 }
                             } else {
-                                ctrl->req.drive_req.status = STATUS_BAD_SECTOR;
+                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                             }
                             break;
 
@@ -1058,8 +1183,10 @@ void main(void) {
 #endif
                             break;
                     }
-
-                    ctrl->request = CTRL_REQUEST_DONE;
+                    ctrl->status = CTRL_STATUS_READY;
+                    REQ_COMPLETE_SetHigh();
+                    while (ctrl->request != CTRL_REQUEST_DONE);
+                    REQ_COMPLETE_SetLow();
                     LED_SetHigh();
                 }
             }
@@ -1088,6 +1215,7 @@ void main(void) {
 #endif            
         } else {
             if (ctrl->request != CTRL_REQUEST_DONE) {
+                ctrl->status = CTRL_STATUS_BUSY;
                 LED_SetLow();
                 switch (ctrl->request) {
                     case CTRL_REQUEST_CHECK:
@@ -1103,7 +1231,7 @@ void main(void) {
                     case CTRL_REQUEST_READ:
                     case CTRL_REQUEST_WRITE:
                     case CTRL_REQUEST_VERIFY:
-                        ctrl->req.drive_req.status = STATUS_CONTROLLER_FAILED;
+                        ctrl->req.rwv_req.status = STATUS_CONTROLLER_FAILED;
                         break;
 
                     case CTRL_REQUEST_READ_PARAMS_FUN8H:
@@ -1119,7 +1247,10 @@ void main(void) {
                         break;
 
                 }
-                ctrl->request = CTRL_REQUEST_DONE;
+                ctrl->status = CTRL_STATUS_READY;
+                REQ_COMPLETE_SetHigh();
+                while (ctrl->request != CTRL_REQUEST_DONE);
+                REQ_COMPLETE_SetLow();
                 LED_SetHigh();
             }
 
