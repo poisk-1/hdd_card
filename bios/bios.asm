@@ -122,7 +122,7 @@ endstruc
 io_ctrl_buffer_size: equ 0x100
 
 io_data: equ io_offset + io_ctrl_buffer_size
-io_data_size: equ 0x200
+io_data_size: equ 0x400
 
 	; DS must point to IO memory
 %macro SubmitIo 1

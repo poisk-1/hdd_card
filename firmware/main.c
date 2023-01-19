@@ -56,9 +56,9 @@ static uint8_t ctrl_buffer[CTRL_BUFFER_SIZE];
 #endif
 #define data_buffer fs.win
 
-//static uint8_t data_buffer_1[DATA_BUFFER_SIZE];
+static uint8_t data_buffer_1[DATA_BUFFER_SIZE];
 
-static uint8_t *buffer_segments[] = {ctrl_buffer, data_buffer, &data_buffer[0x100]};
+static uint8_t *buffer_segments[] = {ctrl_buffer, data_buffer, &data_buffer[0x100], data_buffer_1, &data_buffer_1[0x100]};
 
 #define ACK_IO_Strobe() {ACK_IO_SetLow();ACK_IO_SetHigh();}
 
@@ -106,9 +106,9 @@ enum DriveReqStatus {
     STATUS_CONTROLLER_FAILED = 0x20
 };
 
-void invert_data_buffer() {
+void invert_buffer(uint8_t *buffer) {
     for (size_t i = 0; i < DATA_BUFFER_SIZE; i++) {
-        data_buffer[i] = ~data_buffer[i];
+        buffer[i] = ~buffer[i];
     }
 }
 
@@ -555,6 +555,82 @@ void stop_read_sectors() {
     end_transaction();
 }
 
+#define NEXT_TIMEOUT 2000
+
+struct MultisectorTransfer {
+    void (*stop)(void);
+    bool(*start)(uint32_t);
+    bool(*tx)(uint8_t *);
+
+    uint32_t last_sector;
+    uint32_t timeout;
+};
+
+void init_transfer(struct MultisectorTransfer *mst,
+        void (*stop)(void),
+        bool(*start)(uint32_t),
+        bool(*tx)(uint8_t *)
+        ) {
+    mst->stop = stop;
+    mst->start = start;
+    mst->tx = tx;
+
+    mst->last_sector = 0;
+    mst->timeout = 0;
+}
+
+bool stop_transfer_if_expired(struct MultisectorTransfer *mst) {
+    if (mst->timeout) {
+        if (!--mst->timeout) {
+            mst->stop();
+            return true;
+        }
+    }
+    return false;
+}
+
+void stop_transfer(struct MultisectorTransfer *mst) {
+    if (mst->timeout) {
+        mst->stop();
+        mst->timeout = 0;
+    }
+}
+
+bool transfer_next_sector(struct MultisectorTransfer *mst, uint32_t sector, uint8_t *sector_buffer) {
+    if (mst->timeout) {
+        if (mst->last_sector + 1 == sector) {
+            if (mst->tx(sector_buffer)) {
+                mst->last_sector = sector;
+                mst->timeout = NEXT_TIMEOUT;
+                return true;
+            } else {
+                mst->stop();
+                mst->timeout = 0;
+            }
+        } else {
+            mst->stop();
+
+            if (mst->start(sector) && mst->tx(sector_buffer)) {
+                mst->last_sector = sector;
+                mst->timeout = NEXT_TIMEOUT;
+                return true;
+            } else {
+                mst->stop();
+                mst->timeout = 0;
+            }
+        }
+    } else {
+        if (mst->start(sector) && mst->tx(sector_buffer)) {
+            mst->last_sector = sector;
+            mst->timeout = NEXT_TIMEOUT;
+            return true;
+        } else {
+            mst->stop();
+        }
+    }
+    return false;
+}
+
 /*
                          Main application
  */
@@ -582,7 +658,7 @@ void main(void) {
 
     // Disable the Peripheral Interrupts
     //INTERRUPT_PeripheralInterruptDisable();
-    
+
     ACK_IO_Strobe();
 
     while (1) {
@@ -757,16 +833,11 @@ void main(void) {
             uint32_t lba = 0;
             uint32_t sector = 0;
 
-            uint32_t last_read_sector = 0;
-#define NEXT_READ_TIMEOUT 2000
-            uint32_t read_timeout = 0;
+            struct MultisectorTransfer read_mst;
+            init_transfer(&read_mst, stop_read_sectors, start_read_sectors, read_next_sector);
 
             while (SD_SPI_IsMediaPresent()) {
-                if (read_timeout) {
-                    if (!--read_timeout) {
-                        stop_read_sectors();
-                    }
-                }
+                stop_transfer_if_expired(&read_mst);
 
                 if (ctrl->request != CTRL_REQUEST_DONE) {
                     ctrl->status = CTRL_STATUS_BUSY;
@@ -776,7 +847,8 @@ void main(void) {
 #ifdef DEBUG
                             printf("CHECK\r\n");
 #endif
-                            invert_data_buffer();
+                            invert_buffer(data_buffer);
+                            invert_buffer(data_buffer_1);
                             break;
 
                         case CTRL_REQUEST_SCAN:
@@ -843,62 +915,43 @@ void main(void) {
                             ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
 
                             if (ctrl->req.rwv_req.sectors_count != 0) {
-                                if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
-                                    if (read_timeout) {
-                                        if (last_read_sector + 1 == sector) {
-                                            if (read_next_sector(data_buffer)) {
-                                                last_read_sector = sector;
-                                                read_timeout = NEXT_READ_TIMEOUT;
-                                            } else {
-                                                stop_read_sectors();
-                                                read_timeout = 0;
-                                            }
-                                        } else {
-                                            stop_read_sectors();
+                                uint32_t sectors_to_read = ctrl->req.rwv_req.sectors_count;
+                                if (sectors_to_read > 2) sectors_to_read = 2;
 
-                                            if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
-                                                last_read_sector = sector;
-                                                read_timeout = NEXT_READ_TIMEOUT;
-                                            } else {
-                                                stop_read_sectors();
-                                                read_timeout = 0;
-                                            }
-                                        }
-                                    } else {
-                                        if (start_read_sectors(sector) && read_next_sector(data_buffer)) {
-                                            last_read_sector = sector;
-                                            read_timeout = NEXT_READ_TIMEOUT;
-                                        } else {
-                                            stop_read_sectors();
-                                        }
-                                    }
+                                ctrl->req.rwv_req.status = 0;
 
-
-                                    if (read_timeout) {
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
-                                        ctrl->req.rwv_req.sectors_count--;
+                                for (uint32_t i = 0; i < sectors_to_read; i++) {
+                                    if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+                                        if (transfer_next_sector(&read_mst, sector, i == 0 ? data_buffer : data_buffer_1)) {
+                                            ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
+                                            ctrl->req.rwv_req.sectors_count--;
 
 #ifdef DEBUG
-                                        printf("[lba=%lu,lct=%d,sct=%d]\r\n",
-                                                lba,
-                                                ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                                ctrl->req.rwv_req.sectors_count);
+                                            printf("[lba=%lu]", lba);
 #endif
 
-                                        lba++;
-                                        ctrl->req.rwv_req.status = 0;
+                                            lba++;
+                                        } else {
+#ifdef DEBUG
+                                            printf("[read error]");
+#endif
+                                            ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                                            break;
+                                        }
                                     } else {
 #ifdef DEBUG
-                                        printf("[read error]\r\n");
+                                        printf("[no sector]");
 #endif
                                         ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                                        break;
                                     }
-                                } else {
-#ifdef DEBUG
-                                    printf("[no sector]\r\n");
-#endif
-                                    ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                                 }
+#ifdef DEBUG
+                                printf("[lct=%d,sct=%d]\r\n",
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                        ctrl->req.rwv_req.sectors_count);
+#endif
+
                             } else {
 #ifdef DEBUG
                                 printf("[nothing to read]\r\n");
@@ -932,8 +985,11 @@ void main(void) {
                                     ctrl->req.rwv_req.status = 0;
                                     ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
                                     if (ctrl->req.rwv_req.sectors_count != 0) {
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
-                                        ctrl->req.rwv_req.sectors_count--;
+                                        uint32_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
+                                        if (sectors_to_write > 2) sectors_to_write = 2;
+
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count += sectors_to_write;
+                                        ctrl->req.rwv_req.sectors_count -= sectors_to_write;
 
 #ifdef DEBUG
                                         printf("[nct=%d,sct=%d]\r\n",
@@ -963,10 +1019,7 @@ void main(void) {
                                     ctrl->req.rwv_req.sectors_count);
 #endif
 
-                            if (read_timeout) {
-                                stop_read_sectors();
-                                read_timeout = 0;
-                            }
+                            stop_transfer(&read_mst);
 
                             if (ctrl->req.rwv_req.sectors_last_rv_next_w_count == 0) {
 #ifdef DEBUG
@@ -975,39 +1028,51 @@ void main(void) {
 
                                 ctrl->req.rwv_req.status = 0;
                             } else {
-                                ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
+                                ctrl->req.rwv_req.status = 0;
 
-                                if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
-                                    if (SD_SPI_SectorWrite(sector, data_buffer, 1)) {
-                                        if (ctrl->req.rwv_req.sectors_count != 0) {
-                                            ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
-                                            ctrl->req.rwv_req.sectors_count--;
-                                        }
+                                for (uint32_t i = 0; i < ctrl->req.rwv_req.sectors_last_rv_next_w_count; i++) {
 
+                                    if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+                                        if (SD_SPI_SectorWrite(sector, i == 0 ? data_buffer : data_buffer_1, 1)) {
 #ifdef DEBUG
-                                        printf("[lba=%lu,nct=%d,sct=%d]\r\n",
-                                                lba,
-                                                ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                                ctrl->req.rwv_req.sectors_count);
+                                            printf("[lba=%lu]", lba);
 #endif
 
-                                        lba++;
-                                        ctrl->req.rwv_req.status = 0;
+                                            lba++;
+                                        } else {
+#ifdef DEBUG
+                                            printf("[write error]");
+#endif                                        
+
+                                            ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                                            break;
+
+                                        }
                                     } else {
 #ifdef DEBUG
-                                        printf("[write error]\r\n");
+                                        printf("[no sector]");
 #endif                                        
 
                                         ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-
+                                        break;
                                     }
-                                } else {
-#ifdef DEBUG
-                                    printf("[no sector]\r\n");
-#endif                                        
-
-                                    ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
                                 }
+
+                                ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
+
+                                if (ctrl->req.rwv_req.status == 0 && ctrl->req.rwv_req.sectors_count != 0) {
+                                    uint32_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
+                                    if (sectors_to_write > 2) sectors_to_write = 2;
+
+                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count += sectors_to_write;
+                                    ctrl->req.rwv_req.sectors_count -= sectors_to_write;
+
+                                }
+#ifdef DEBUG
+                                printf("[nct=%d,sct=%d]\r\n",
+                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
+                                        ctrl->req.rwv_req.sectors_count);
+#endif                                    
                             }
 
                             break;
@@ -1203,11 +1268,7 @@ void main(void) {
                 }
             }
 
-            if (read_timeout) {
-                stop_read_sectors();
-                read_timeout = 0;
-            }
-
+            stop_transfer(&read_mst);
             f_mount(0, "0:", 0);
 
 #ifdef DEBUG
@@ -1219,7 +1280,8 @@ void main(void) {
                 LED_SetLow();
                 switch (ctrl->request) {
                     case CTRL_REQUEST_CHECK:
-                        invert_data_buffer();
+                        invert_buffer(data_buffer);
+                        invert_buffer(data_buffer_1);
                         break;
 
                     case CTRL_REQUEST_SCAN:

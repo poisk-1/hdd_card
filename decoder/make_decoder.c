@@ -11,7 +11,7 @@ const size_t bios_base = 0xe0000;
 const size_t bios_size = 0x1000;
 
 const size_t io_base = bios_base + bios_size;
-const size_t io_size = 0x300;
+const size_t io_size = 0x500;
 
 const size_t sel_io_bit = 6;
 const size_t sel_bios_bit = 7;
