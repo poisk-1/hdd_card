@@ -16,7 +16,8 @@ org 100h
 
 section .bss
 
-buffer: resb 0x8000 ; 32K
+buffer_size: equ 0x8000 ; 32K
+buffer: resb buffer_size
 
 section .text
 
@@ -30,46 +31,61 @@ main:
 	int 0x13
 	jc .error
 
-	mov ah, 0
-	int 0x1a
-	push cx
-	push dx
-
-	mov ah, 0x2 ; read
-	mov al, 0x40 ; 64 sectors
-	mov ch, 0
-	mov cl, 1
-	mov dh, 0
-	mov dl, 0x80
-	mov bx, buffer
-	int 0x13
-	jc .error
-
-	mov ah, 0
-	int 0x1a
-
-	pop ax
-	sub dx, ax
-	pop ax
-	sbb cx, ax
-
-	mov ax, dx
-	mov dx, cx
-
-	DisplayString `Success! It took `
-	call display_dword
-	DisplayString ` ticks to read 64 sectors. Press [R] to repeat: `
+	DisplayString `Press [R]ead, [W]rite or [V]erify: `
 	call read_char
 	call display_char
 	DisplayString `\r\n`
 
 	cmp al, 'r'
-	je .repeat
+	je .read
 
 	cmp al, 'R'
-	je .repeat
+	je .read
+
+	cmp al, 'w'
+	je .write
+
+	cmp al, 'W'
+	je .write
+
+	cmp al, 'v'
+	je .verify
+
+	cmp al, 'V'
+	je .verify
 
 	jmp .exit
+
+.read:
+	mov ah, 0x2
+	jmp .set_params
+
+.write:
+	cld
+	mov cx, buffer_size
+	mov di, buffer
+	mov al, 0xad
+	rep stosb
+
+	mov ah, 0x3
+	jmp .set_params
+
+.verify:
+	mov ah, 0x4
+	jmp .set_params
+
+.set_params:
+	mov al, 0x40 ; 64 sectors
+	mov ch, 0xff ;
+	mov cl, 0xc1 ; cylinder 1023, sector 1
+	mov dh, 0    ; head 0
+	mov dl, 0x80 ; hard disk 0
+	mov bx, buffer
+	int 0x13
+	jc .error
+
+	DisplayString `Success!\r\n`
+	jmp .repeat
 
 .error:
 	DisplayString `Error\r\n`

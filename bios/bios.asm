@@ -62,10 +62,9 @@ ctrl_request_read_next:             equ 0x05
 ctrl_request_write:                 equ 0x06
 ctrl_request_write_next:            equ 0x07
 ctrl_request_verify:                equ 0x08
-ctrl_request_verify_next:           equ 0x09
-ctrl_request_read_params_fun8h:     equ 0x0a
-ctrl_request_read_params_fun15h:    equ 0x0b
-ctrl_request_detect_media_change:   equ 0x0c
+ctrl_request_read_params_fun8h:     equ 0x09
+ctrl_request_read_params_fun15h:    equ 0x0a
+ctrl_request_detect_media_change:   equ 0x0b
 
 io_offset: equ 0x1000 ; reserve 4K for BIOS
 
@@ -85,7 +84,7 @@ struc io_ctrl_rvw_req, io_ctrl_req_offset
 	.sectors_count resb 1
 
 	.status resb 1
-	.sectors_last_rv_next_w_count resb 1
+	.sectors_last_r_next_w_count resb 1
 endstruc
 
 struc io_ctrl_scan_req, io_ctrl_req_offset
@@ -356,7 +355,7 @@ int13h:
 	cmp ah, 0 ; has read error occured?
 	jne .return_error
 
-	mov byte bl, [io_ctrl_rvw_req.sectors_last_rv_next_w_count]
+	mov byte bl, [io_ctrl_rvw_req.sectors_last_r_next_w_count]
 	add al, bl ; add number sectors read in the last IO
 
 	mov si, io_data ; make SI to point to the beginning of the IO buffer
@@ -408,7 +407,7 @@ int13h:
 	jne .return_error
 
 	add al, bl ; add number sectors writtem in the last IO
-	mov byte bl, [io_ctrl_rvw_req.sectors_last_rv_next_w_count]
+	mov byte bl, [io_ctrl_rvw_req.sectors_last_r_next_w_count]
 	cmp bl, 0 ; nothing remaining to write?
 	je .return_success
 
@@ -445,26 +444,15 @@ int13h:
 	mov byte [io_ctrl_rvw_req.drive_number], dl
 	mov byte [io_ctrl_rvw_req.sectors_count], al
 
-	sub al, al ; reset number of verified sectors
-
 	SubmitIo ctrl_request_verify
 
-.verify_next:
 	mov byte ah, [io_ctrl_rvw_req.status]
-	mov byte bl, [io_ctrl_rvw_req.sectors_last_rv_next_w_count]
-	add al, bl ; add number sectors verified in the last IO
 
 	call set_status
 
 	cmp ah, 0 ; has verification error occured?
 	jne .return_error
-
-	cmp byte [io_ctrl_rvw_req.sectors_count], 0
-	je .return_success
-
-	SubmitIo ctrl_request_verify_next
-
-	jmp .verify_next
+	jmp .return_success
 
 .empty:
 	mov ah, 0

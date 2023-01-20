@@ -87,10 +87,9 @@ enum Request {
     CTRL_REQUEST_WRITE = 0x6,
     CTRL_REQUEST_WRITE_NEXT = 0x7,
     CTRL_REQUEST_VERIFY = 0x8,
-    CTRL_REQUEST_VERIFY_NEXT = 0x9,
-    CTRL_REQUEST_READ_PARAMS_FUN8H = 0xa,
-    CTRL_REQUEST_READ_PARAMS_FUN15H = 0xb,
-    CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0xc,
+    CTRL_REQUEST_READ_PARAMS_FUN8H = 0x9,
+    CTRL_REQUEST_READ_PARAMS_FUN15H = 0xa,
+    CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0xb,
 };
 
 enum Status {
@@ -121,7 +120,7 @@ struct RWVReq {
     uint8_t sectors_count;
 
     uint8_t status;
-    uint8_t sectors_last_rv_next_w_count;
+    uint8_t sectors_last_r_next_w_count;
 };
 
 struct ScanReq {
@@ -395,6 +394,8 @@ static FRESULT setup_clmt(FIL *fp, DWORD *cltbl, DWORD cltbl_size) {
 #define SD_COMMAND_CODE_BIT_MASK (0b00111111)
 #define SD_COMMAND_TRANSMIT_BIT_MASK (1<<6)
 
+#define SD_WRITE_RESPONSE_TOKEN_MASK   0x1F  //Bit mask to AND with the write token response uint8_t from the media, to clear the don't care bits.
+
 enum SD_TOKEN {
     SD_TOKEN_START = 0xFE,
     SD_TOKEN_START_MULTI_BLOCK = 0xFC,
@@ -523,6 +524,13 @@ bool start_read_sectors(uint32_t address) {
     return (response == 0);
 }
 
+bool start_write_sectors(uint32_t address) {
+    start_transaction();
+
+    uint8_t response = send_command(SD_COMMAND_WRITE_MULTI_BLOCK, address);
+    return (response == 0);
+}
+
 uint8_t wait_for_token() {
     uint32_t long_timeout = SD_NAC_TIMEOUT;
     uint8_t response;
@@ -540,6 +548,7 @@ bool read_next_sector(uint8_t *buffer) {
             *ptr = SPI1_ExchangeByte(0xFF);
         }
 
+        // CRC
         SPI1_ExchangeByte(0xFF);
         SPI1_ExchangeByte(0xFF);
 
@@ -549,8 +558,39 @@ bool read_next_sector(uint8_t *buffer) {
     return false;
 }
 
+bool write_next_sector(uint8_t *buffer) {
+    SPI1_ExchangeByte(SD_TOKEN_START_MULTI_BLOCK);
+
+    uint8_t *ptr = buffer;
+    for (size_t j = 0; j < 0x200; j++, ptr++) {
+        SPI1_ExchangeByte(*ptr);
+    }
+
+    // CRC
+    SPI1_ExchangeByte(0xFF);
+    SPI1_ExchangeByte(0xFF);
+
+    uint8_t response = SPI1_ExchangeByte(0xFF);
+
+    SPI1_ExchangeByte(0xFF);
+
+    wait_busy();
+
+    return (response & SD_WRITE_RESPONSE_TOKEN_MASK) == SD_TOKEN_DATA_ACCEPTED;
+}
+
 void stop_read_sectors() {
     (void) send_command(SD_COMMAND_STOP_TRANSMISSION, 0);
+
+    end_transaction();
+}
+
+void stop_write_sectors() {
+    SPI1_ExchangeByte(SD_TOKEN_STOP_TRANSMISSION);
+
+    SPI1_ExchangeByte(0xFF);
+
+    wait_busy();
 
     end_transaction();
 }
@@ -596,6 +636,10 @@ void stop_transfer(struct MultisectorTransfer *mst) {
     }
 }
 
+void abort_transfer(struct MultisectorTransfer *mst) {
+    mst->timeout = 0;
+}
+
 bool transfer_next_sector(struct MultisectorTransfer *mst, uint32_t sector, uint8_t *sector_buffer) {
     if (mst->timeout) {
         if (mst->last_sector + 1 == sector) {
@@ -631,14 +675,671 @@ bool transfer_next_sector(struct MultisectorTransfer *mst, uint32_t sector, uint
     return false;
 }
 
+void wait_or_handle_ctrl_request(struct Ctrl *ctrl, void(*wait)(void), void(*handle)(struct Ctrl *)) {
+    if (ctrl->request == CTRL_REQUEST_DONE) {
+        wait();
+    } else {
+        ctrl->status = CTRL_STATUS_BUSY;
+        LED_SetLow();
+
+        handle(ctrl);
+
+        ctrl->status = CTRL_STATUS_READY;
+        REQ_COMPLETE_SetHigh();
+        while (ctrl->request != CTRL_REQUEST_DONE);
+        REQ_COMPLETE_SetLow();
+        LED_SetHigh();
+    }
+}
+
+static struct Drive* current_read_drive = NULL;
+static uint32_t current_read_lba = 0;
+static uint32_t current_read_sector = 0;
+
+static struct MultisectorTransfer read_mst;
+
+static struct Drive* current_write_drive = NULL;
+static uint32_t current_write_lba = 0;
+static uint32_t current_write_sector = 0;
+
+static struct MultisectorTransfer write_mst;
+
+static void wait_media_present() {
+    stop_transfer_if_expired(&read_mst);
+    stop_transfer_if_expired(&write_mst);
+}
+
+static void handle_media_present(struct Ctrl *ctrl) {
+    struct Drive* drive = NULL;
+    uint32_t lba = 0;
+    uint32_t sector = 0;
+    
+    if (ctrl->request != CTRL_REQUEST_READ &&
+        ctrl->request != CTRL_REQUEST_READ_NEXT) {
+        stop_transfer(&read_mst);
+    }
+
+    if (ctrl->request != CTRL_REQUEST_WRITE &&
+        ctrl->request != CTRL_REQUEST_WRITE_NEXT) {
+        stop_transfer(&write_mst);        
+    }
+    
+    switch (ctrl->request) {
+        case CTRL_REQUEST_CHECK:
+#ifdef DEBUG
+            printf("CHECK\r\n");
+#endif
+            invert_buffer(data_buffer);
+            invert_buffer(data_buffer_1);
+            break;
+
+        case CTRL_REQUEST_SCAN:
+#ifdef DEBUG
+            printf("SCAN\r\n");
+#endif
+            ctrl->req.scan_req.number_of_floppy_drives = 0;
+
+            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                if (has_geometry(&floppy_drives[i])) {
+                    ctrl->req.scan_req.number_of_floppy_drives++;
+                }
+            }
+
+            ctrl->req.scan_req.number_of_hard_drives = 0;
+
+            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                if (has_geometry(&hard_drives[i])) {
+                    ctrl->req.scan_req.number_of_hard_drives++;
+                }
+            }
+
+            break;
+
+        case CTRL_REQUEST_RESET:
+#ifdef DEBUG
+            printf("RESET[d=%d]\r\n", ctrl->req.rwv_req.drive_number);
+#endif
+            ctrl->req.rwv_req.status = 0;
+
+            break;
+
+        case CTRL_REQUEST_READ:
+            current_read_drive = find_drive(ctrl->req.rwv_req.drive_number);
+
+#ifdef DEBUG
+            printf(
+                    "READ[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
+                    ctrl->req.rwv_req.drive_number,
+                    ctrl->req.rwv_req.low_cylinder_number,
+                    ctrl->req.rwv_req.head_number,
+                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                    ctrl->req.rwv_req.sectors_count
+                    );
+#endif
+
+            if (!(current_read_drive && has_image(current_read_drive) && chs_to_lba(current_read_drive, &ctrl->req.rwv_req, &current_read_lba))) {
+#ifdef DEBUG
+                printf("[no lba]\r\n");
+#endif
+                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                break;
+            }
+
+
+        case CTRL_REQUEST_READ_NEXT:
+#ifdef DEBUG
+            if (ctrl->request == CTRL_REQUEST_READ_NEXT) {
+                printf("READ_NEXT[lct=%d,sct=%d]",
+                        ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                        ctrl->req.rwv_req.sectors_count);
+            }
+#endif
+            ctrl->req.rwv_req.sectors_last_r_next_w_count = 0;
+            ctrl->req.rwv_req.status = 0;
+
+            if (ctrl->req.rwv_req.sectors_count != 0) {
+                uint8_t sectors_to_read = ctrl->req.rwv_req.sectors_count;
+                if (sectors_to_read > 2) sectors_to_read = 2;
+
+                for (uint8_t i = 0; i < sectors_to_read; i++) {
+                    if (offset2sector(&current_read_drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * current_read_lba, &current_read_sector) == FR_OK) {
+                        if (transfer_next_sector(&read_mst, current_read_sector, i == 0 ? data_buffer : data_buffer_1)) {
+                            ctrl->req.rwv_req.sectors_last_r_next_w_count++;
+                            ctrl->req.rwv_req.sectors_count--;
+
+#ifdef DEBUG
+                            printf("[lba=%lu]", current_read_lba);
+#endif
+
+                            current_read_lba++;
+                        } else {
+#ifdef DEBUG
+                            printf("[read error]");
+#endif
+                            ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                            break;
+                        }
+                    } else {
+#ifdef DEBUG
+                        printf("[no sector]");
+#endif
+                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                        break;
+                    }
+                }
+#ifdef DEBUG
+                printf("[lct=%d,sct=%d]\r\n",
+                        ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                        ctrl->req.rwv_req.sectors_count);
+#endif
+
+            } else {
+#ifdef DEBUG
+                printf("[nothing to read]\r\n");
+#endif
+            }
+
+            break;
+
+        case CTRL_REQUEST_WRITE:
+            current_write_drive = find_drive(ctrl->req.rwv_req.drive_number);
+#ifdef DEBUG
+            printf(
+                    "WRITE[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
+                    ctrl->req.rwv_req.drive_number,
+                    ctrl->req.rwv_req.low_cylinder_number,
+                    ctrl->req.rwv_req.head_number,
+                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                    ctrl->req.rwv_req.sectors_count
+                    );
+#endif
+
+            ctrl->req.rwv_req.sectors_last_r_next_w_count = 0;
+            ctrl->req.rwv_req.status = 0;
+
+            if (current_write_drive && has_image(current_write_drive) && chs_to_lba(current_write_drive, &ctrl->req.rwv_req, &current_write_lba)) {
+                if (current_write_drive->read_only) {
+#ifdef DEBUG
+                    printf("[write protected]\r\n");
+#endif
+                    ctrl->req.rwv_req.status = STATUS_WRITE_PROTECTED;
+                } else {
+                    if (ctrl->req.rwv_req.sectors_count != 0) {
+                        uint8_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
+                        if (sectors_to_write > 2) sectors_to_write = 2;
+
+                        ctrl->req.rwv_req.sectors_last_r_next_w_count += sectors_to_write;
+                        ctrl->req.rwv_req.sectors_count -= sectors_to_write;
+
+#ifdef DEBUG
+                        printf("[nct=%d,sct=%d]\r\n",
+                                ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                                ctrl->req.rwv_req.sectors_count);
+#endif
+
+                    } else {
+#ifdef DEBUG
+                        printf("[nothing to write]\r\n");
+#endif                                        
+                    }
+                }
+            } else {
+#ifdef DEBUG
+                printf("[no lba]\r\n");
+#endif
+                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+            }
+
+            break;
+
+        case CTRL_REQUEST_WRITE_NEXT:
+#ifdef DEBUG
+            printf("WRITE_NEXT[nct=%d,sct=%d]",
+                    ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                    ctrl->req.rwv_req.sectors_count);
+#endif
+
+            ctrl->req.rwv_req.status = 0;
+
+            if (ctrl->req.rwv_req.sectors_last_r_next_w_count != 0) {
+                for (uint8_t i = 0; i < ctrl->req.rwv_req.sectors_last_r_next_w_count; i++) {
+                    if (offset2sector(&current_write_drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * current_write_lba, &current_write_sector) == FR_OK) {
+                        if (transfer_next_sector(&write_mst, current_write_sector, i == 0 ? data_buffer : data_buffer_1)) {
+#ifdef DEBUG
+                            printf("[lba=%lu]", current_write_lba);
+#endif
+                            current_write_lba++;
+                        } else {
+#ifdef DEBUG
+                            printf("[write error]");
+#endif                                        
+                            ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                            break;
+
+                        }
+                    } else {
+#ifdef DEBUG
+                        printf("[no sector]");
+#endif                                        
+                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                        break;
+                    }
+                }
+
+                ctrl->req.rwv_req.sectors_last_r_next_w_count = 0;
+
+                if (ctrl->req.rwv_req.status == 0 && ctrl->req.rwv_req.sectors_count != 0) {
+                    uint8_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
+                    if (sectors_to_write > 2) sectors_to_write = 2;
+
+                    ctrl->req.rwv_req.sectors_last_r_next_w_count += sectors_to_write;
+                    ctrl->req.rwv_req.sectors_count -= sectors_to_write;
+
+                }
+#ifdef DEBUG
+                printf("[nct=%d,sct=%d]\r\n",
+                        ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                        ctrl->req.rwv_req.sectors_count);
+#endif                                    
+            } else {
+#ifdef DEBUG
+                printf("[nothing to write]\r\n");
+#endif                                        
+            }
+
+            break;
+
+        case CTRL_REQUEST_VERIFY:
+            drive = find_drive(ctrl->req.rwv_req.drive_number);
+#ifdef DEBUG
+            printf(
+                    "VERIFY[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
+                    ctrl->req.rwv_req.drive_number,
+                    ctrl->req.rwv_req.low_cylinder_number,
+                    ctrl->req.rwv_req.head_number,
+                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                    ctrl->req.rwv_req.sectors_count
+                    );
+#endif
+
+            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba))) {
+#ifdef DEBUG
+                printf("[no lba]\r\n");
+#endif
+                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+            } else {
+                ctrl->req.rwv_req.status = 0;
+
+                while (ctrl->req.rwv_req.sectors_count != 0) {
+                    if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+#ifdef DEBUG
+                        printf("[lba=%lu]", lba);
+#endif
+                        ctrl->req.rwv_req.sectors_count--;
+                        lba++;
+
+                    } else {
+#ifdef DEBUG
+                        printf("[no sector]");
+#endif
+                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+                        break;
+                    }
+                }
+#ifdef DEBUG
+                printf("\r\n");
+#endif                                
+            }
+
+            break;
+
+        case CTRL_REQUEST_READ_PARAMS_FUN8H:
+            ctrl->req.read_params_fun8h_req.number_of_drives = 0;
+
+            if (is_hard_drive(ctrl->req.read_params_fun8h_req.drive_number)) {
+                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                    if (has_geometry(&hard_drives[i])) {
+                        ctrl->req.read_params_fun8h_req.number_of_drives++;
+                    }
+                }
+            } else {
+                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                    if (has_geometry(&floppy_drives[i])) {
+                        ctrl->req.read_params_fun8h_req.number_of_drives++;
+                    }
+                }
+            }
+
+            drive = find_drive(ctrl->req.read_params_fun8h_req.drive_number);
+
+#ifdef DEBUG
+            printf(
+                    "READ_PARAMS_FUN8H[d=%d]",
+                    ctrl->req.read_params_fun8h_req.drive_number
+                    );
+#endif                                
+
+            if (drive && has_geometry(drive)) {
+                set_params_fun8h(drive, &ctrl->req.read_params_fun8h_req);
+#ifdef DEBUG
+                printf(
+                        "[mlc=%d,mh=%d,mshc=%d]\r\n",
+                        ctrl->req.read_params_fun8h_req.max_low_cylinder_number,
+                        ctrl->req.read_params_fun8h_req.max_head_number,
+                        ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers
+                        );
+#endif                                
+            } else {
+#ifdef DEBUG
+                printf("[no geometry]\r\n");
+#endif                                
+                ctrl->req.read_params_fun8h_req.success = 0;
+                ctrl->req.read_params_fun8h_req.drive_type = 0;
+                ctrl->req.read_params_fun8h_req.max_low_cylinder_number = 0;
+                ctrl->req.read_params_fun8h_req.max_head_number = 0;
+                ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers = 0;
+            }
+
+            break;
+
+        case CTRL_REQUEST_READ_PARAMS_FUN15H:
+            drive = find_drive(ctrl->req.read_params_fun15h_req.drive_number);
+#ifdef DEBUG
+            printf(
+                    "READ_PARAMS_FUN15H[d=%d]",
+                    ctrl->req.read_params_fun15h_req.drive_number
+                    );
+#endif
+
+            if (drive && has_geometry(drive)) {
+#ifdef DEBUG
+                printf("[t=%d]\r\n", drive->drive_type_fun15h);
+#endif
+
+                ctrl->req.read_params_fun15h_req.success = 1;
+                ctrl->req.read_params_fun15h_req.drive_type = drive->drive_type_fun15h;
+            } else {
+#ifdef DEBUG
+                printf("[no geometry]\r\n");
+#endif
+                ctrl->req.read_params_fun15h_req.success = 0;
+                ctrl->req.read_params_fun15h_req.drive_type = 0;
+            }
+
+            break;
+
+        case CTRL_REQUEST_DETECT_MEDIA_CHANGE:
+            drive = find_drive(ctrl->req.detect_media_change.drive_number);
+#ifdef DEBUG
+            printf(
+                    "DETECT_MEDIA_CHANGE[d=%d",
+                    ctrl->req.detect_media_change.drive_number
+                    );
+#endif
+
+            if (drive && has_image(drive)) {
+                if (drive->media_changed) {
+                    drive->media_changed = false;
+#ifdef DEBUG
+                    printf("[media changed]\r\n");
+#endif
+                    ctrl->req.detect_media_change.status = STATUS_DISK_CHANGED;
+                } else {
+#ifdef DEBUG
+                    printf("[media not changed]\r\n");
+#endif
+                    ctrl->req.detect_media_change.status = 0;
+                }
+            } else {
+                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
+            }
+            break;
+
+        default:
+#ifdef DEBUG
+            printf("UNKNOWN REQUEST %d\r\n", ctrl->request);
+#endif
+            break;
+    }
+}
+
+static void wait_media_not_present() {
+}
+
+static void handle_media_not_present(struct Ctrl *ctrl) {
+    switch (ctrl->request) {
+        case CTRL_REQUEST_CHECK:
+            invert_buffer(data_buffer);
+            invert_buffer(data_buffer_1);
+            break;
+
+        case CTRL_REQUEST_SCAN:
+            ctrl->req.scan_req.number_of_floppy_drives = 0;
+            ctrl->req.scan_req.number_of_hard_drives = 0;
+            break;
+
+        case CTRL_REQUEST_RESET:
+        case CTRL_REQUEST_READ:
+        case CTRL_REQUEST_WRITE:
+        case CTRL_REQUEST_VERIFY:
+            ctrl->req.rwv_req.status = STATUS_CONTROLLER_FAILED;
+            break;
+
+        case CTRL_REQUEST_READ_PARAMS_FUN8H:
+            ctrl->req.read_params_fun8h_req.number_of_drives = 0;
+            ctrl->req.read_params_fun8h_req.success = 0;
+            break;
+
+        case CTRL_REQUEST_READ_PARAMS_FUN15H:
+            ctrl->req.read_params_fun15h_req.success = 0;
+            break;
+
+        default:
+            break;
+
+    }
+}
+
+static bool init_drives(void) {
+    if (f_mount(&fs, "0:", 1) != FR_OK) return false;
+
+    memset(&floppy_drives, 0, sizeof (struct Drive) * MAX_NUMBER_FLOPPY_DRIVES);
+    memset(&hard_drives, 0, sizeof (struct Drive) * MAX_NUMBER_HARD_DRIVES);
+
+    static FILINFO file_info;
+
+    for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+        static FIL info_file;
+        static char info[FLOPPY_INFO_TYPE_LENGTH + 1];
+        memset(info, 0, FLOPPY_INFO_TYPE_LENGTH + 1);
+        UINT read_bytes = 0;
+
+        if (
+                f_open(&info_file, floppy_info_file_names[i], FA_READ) == FR_OK &&
+                f_read(&info_file, info, FLOPPY_INFO_TYPE_LENGTH, &read_bytes) == FR_OK) {
+            if (strncmp(info, FLOPPY_INFO_TYPE_1440, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_1440_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_1440_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_1440_NUMBER_OF_CYLINDERS;
+            } else if (strncmp(info, FLOPPY_INFO_TYPE_720, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_720;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_720_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_720_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_720_NUMBER_OF_CYLINDERS;
+            } else if (strncmp(info, FLOPPY_INFO_TYPE_1200, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1200;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_1200_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_1200_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_1200_NUMBER_OF_CYLINDERS;
+            } else if (strncmp(info, FLOPPY_INFO_TYPE_360, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_360_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_360_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_360_NUMBER_OF_CYLINDERS;
+            } else if (strncmp(info, FLOPPY_INFO_TYPE_180, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_180_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_180_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_180_NUMBER_OF_CYLINDERS;
+            } else if (strncmp(info, FLOPPY_INFO_TYPE_320, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_320_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_320_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_320_NUMBER_OF_CYLINDERS;
+            } else if (strncmp(info, FLOPPY_INFO_TYPE_160, FLOPPY_INFO_TYPE_LENGTH) == 0) {
+                floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
+                floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+
+                floppy_drives[i].number_of_heads = FLOPPY_160_NUMBER_OF_HEADS;
+                floppy_drives[i].number_of_sectors = FLOPPY_160_NUMBER_OF_SECTORS;
+                floppy_drives[i].number_of_cylinders = FLOPPY_160_NUMBER_OF_CYLINDERS;
+            }
+
+#ifdef DEBUG
+            if (has_geometry(&floppy_drives[i])) {
+                printf("FOUND FLOPPY%d.TXT[c=%d,h=%d,s=%d]\r\n",
+                        i,
+                        floppy_drives[i].number_of_cylinders,
+                        floppy_drives[i].number_of_heads,
+                        floppy_drives[i].number_of_sectors
+                        );
+            }
+#endif                                                    
+        }
+    }
+
+    for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+        if (has_geometry(&floppy_drives[i])) {
+            if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK &&
+                    file_info.fsize == disk_size_bytes(&floppy_drives[i])) {
+                if (
+                        f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE) == FR_OK &&
+                        setup_clmt(&floppy_drives[i].image_file, floppy_image_file_cltbl[i], FLOPPY_IMAGE_FILE_CLTBL_SIZE) == FR_OK &&
+                        f_lseek(&floppy_drives[i].image_file, CREATE_LINKMAP) == FR_OK) {
+
+                    if (f_stat(floppy_ro_file_names[i], &file_info) == FR_OK) {
+                        floppy_drives[i].read_only = true;
+                    }
+
+                    floppy_drives[i].media_changed = true;
+
+#ifdef DEBUG
+                    if (has_image(&floppy_drives[i])) {
+                        printf("MOUNTED FLOPPY%d.IMG[ro=%d,f=%ld]\r\n",
+                                i,
+                                floppy_drives[i].read_only,
+                                floppy_image_file_cltbl[i][0]);
+                    }
+#endif                            
+                } else {
+#ifdef DEBUG
+                    printf("TOO MANY FRAGMENTS FLOPPY%d.IMG[f=%ld]\r\n",
+                            i,
+                            floppy_image_file_cltbl[i][0]);
+#endif                                
+
+                    f_close(&floppy_drives[i].image_file);
+                }
+            } else {
+#ifdef DEBUG
+                printf("NOT FOUND OR BAD SIZE FLOPPY%d.IMG\r\n", i);
+#endif                                                    
+            }
+        }
+    }
+
+    for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+        if (f_stat(hard_image_file_names[i], &file_info) == FR_OK) {
+            FSIZE_t size = file_info.fsize;
+
+            if (size > HARD_CYLINDER_SIZE_BYTES) {
+                if (
+                        f_open(&hard_drives[i].image_file, hard_image_file_names[i], FA_READ | FA_WRITE) == FR_OK &&
+                        setup_clmt(&hard_drives[i].image_file, hard_image_file_cltbl[i], HARD_IMAGE_FILE_CLTBL_SIZE) == FR_OK &&
+                        f_lseek(&hard_drives[i].image_file, CREATE_LINKMAP) == FR_OK) {
+                    hard_drives[i].drive_type_fun8h = 0;
+                    hard_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
+
+                    hard_drives[i].number_of_heads = HARD_NUMBER_OF_HEADS;
+                    hard_drives[i].number_of_sectors = HARD_NUMBER_OF_SECTORS;
+                    hard_drives[i].number_of_cylinders = size / HARD_CYLINDER_SIZE_BYTES;
+
+                    if (hard_drives[i].number_of_cylinders > HARD_MAX_NUMBER_OF_CYLINDERS)
+                        hard_drives[i].number_of_cylinders = HARD_MAX_NUMBER_OF_CYLINDERS;
+
+#ifdef DEBUG
+                    printf("MOUNTED HARD%d.IMG[c=%d,h=%d,s=%d,f=%ld]\r\n",
+                            i,
+                            hard_drives[i].number_of_cylinders,
+                            hard_drives[i].number_of_heads,
+                            hard_drives[i].number_of_sectors,
+                            hard_image_file_cltbl[i][0]);
+#endif                                
+                } else {
+#ifdef DEBUG
+                    printf("TOO MANY FRAGMENTS HARD%d.IMG[f=%ld]\r\n",
+                            i,
+                            hard_image_file_cltbl[i][0]);
+#endif                                
+                    f_close(&hard_drives[i].image_file);
+                }
+            } else {
+#ifdef DEBUG
+                printf("BAD SIZE HARD%d.IMG\r\n", i);
+#endif                                                    
+            }
+
+        } else {
+#ifdef DEBUG
+            printf("NOT FOUND HARD%d.IMG\r\n", i);
+#endif                                                    
+        }
+    }
+
+    return true;
+}
+
+static void clear_drives(void) {
+    for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+        if (has_image(&floppy_drives[i])) {
+            f_close(&floppy_drives[i].image_file);
+        }
+    }
+
+    for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+        if (has_image(&hard_drives[i])) {
+            f_close(&hard_drives[i].image_file);
+        }
+    }
+
+    f_mount(0, "0:", 0);
+
+#ifdef DEBUG
+    printf("UNMOUNTED\r\n");
+#endif                
+}
+
 /*
                          Main application
  */
 void main(void) {
     // Initialize the device
     SYSTEM_Initialize();
-    INT0_SetInterruptHandler(handle_read);
-    INT1_SetInterruptHandler(handle_write);
+    //INT0_SetInterruptHandler(handle_read);
+    //INT1_SetInterruptHandler(handle_write);
 
     memset(ctrl_buffer, 0, CTRL_BUFFER_SIZE);
     struct Ctrl *ctrl = (struct Ctrl *) ctrl_buffer;
@@ -661,661 +1362,28 @@ void main(void) {
 
     ACK_IO_Strobe();
 
+    init_transfer(&read_mst, stop_read_sectors, start_read_sectors, read_next_sector);
+    init_transfer(&write_mst, stop_write_sectors, start_write_sectors, write_next_sector);
+
     while (1) {
-        if (SD_SPI_IsMediaPresent() && f_mount(&fs, "0:", 1) == FR_OK) {
-            memset(&floppy_drives, 0, sizeof (struct Drive) * MAX_NUMBER_FLOPPY_DRIVES);
-            memset(&hard_drives, 0, sizeof (struct Drive) * MAX_NUMBER_HARD_DRIVES);
-
-            static FILINFO file_info;
-
-            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                static FIL info_file;
-                static char info[FLOPPY_INFO_TYPE_LENGTH + 1];
-                memset(info, 0, FLOPPY_INFO_TYPE_LENGTH + 1);
-                UINT read_bytes = 0;
-
-                if (
-                        f_open(&info_file, floppy_info_file_names[i], FA_READ) == FR_OK &&
-                        f_read(&info_file, info, FLOPPY_INFO_TYPE_LENGTH, &read_bytes) == FR_OK) {
-                    if (strncmp(info, FLOPPY_INFO_TYPE_1440, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1440;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_1440_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_1440_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_1440_NUMBER_OF_CYLINDERS;
-                    } else if (strncmp(info, FLOPPY_INFO_TYPE_720, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_720;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_720_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_720_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_720_NUMBER_OF_CYLINDERS;
-                    } else if (strncmp(info, FLOPPY_INFO_TYPE_1200, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_1200;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_1200_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_1200_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_1200_NUMBER_OF_CYLINDERS;
-                    } else if (strncmp(info, FLOPPY_INFO_TYPE_360, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_360_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_360_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_360_NUMBER_OF_CYLINDERS;
-                    } else if (strncmp(info, FLOPPY_INFO_TYPE_180, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_180_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_180_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_180_NUMBER_OF_CYLINDERS;
-                    } else if (strncmp(info, FLOPPY_INFO_TYPE_320, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_320_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_320_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_320_NUMBER_OF_CYLINDERS;
-                    } else if (strncmp(info, FLOPPY_INFO_TYPE_160, FLOPPY_INFO_TYPE_LENGTH) == 0) {
-                        floppy_drives[i].drive_type_fun8h = FUN8H_DRIVE_TYPE_FLOPPY_360;
-                        floppy_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-
-                        floppy_drives[i].number_of_heads = FLOPPY_160_NUMBER_OF_HEADS;
-                        floppy_drives[i].number_of_sectors = FLOPPY_160_NUMBER_OF_SECTORS;
-                        floppy_drives[i].number_of_cylinders = FLOPPY_160_NUMBER_OF_CYLINDERS;
-                    }
-
-#ifdef DEBUG
-                    if (has_geometry(&floppy_drives[i])) {
-                        printf("FOUND FLOPPY%d.TXT[c=%d,h=%d,s=%d]\r\n",
-                                i,
-                                floppy_drives[i].number_of_cylinders,
-                                floppy_drives[i].number_of_heads,
-                                floppy_drives[i].number_of_sectors
-                                );
-                    }
-#endif                                                    
-                }
-            }
-
-            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (has_geometry(&floppy_drives[i])) {
-                    if (f_stat(floppy_image_file_names[i], &file_info) == FR_OK &&
-                            file_info.fsize == disk_size_bytes(&floppy_drives[i])) {
-                        if (
-                                f_open(&floppy_drives[i].image_file, floppy_image_file_names[i], FA_READ | FA_WRITE) == FR_OK &&
-                                setup_clmt(&floppy_drives[i].image_file, floppy_image_file_cltbl[i], FLOPPY_IMAGE_FILE_CLTBL_SIZE) == FR_OK &&
-                                f_lseek(&floppy_drives[i].image_file, CREATE_LINKMAP) == FR_OK) {
-
-                            if (f_stat(floppy_ro_file_names[i], &file_info) == FR_OK) {
-                                floppy_drives[i].read_only = true;
-                            }
-
-                            floppy_drives[i].media_changed = true;
-
-#ifdef DEBUG
-                            if (has_image(&floppy_drives[i])) {
-                                printf("MOUNTED FLOPPY%d.IMG[ro=%d,f=%ld]\r\n",
-                                        i,
-                                        floppy_drives[i].read_only,
-                                        floppy_image_file_cltbl[i][0]);
-                            }
-#endif                            
-                        } else {
-#ifdef DEBUG
-                            printf("TOO MANY FRAGMENTS FLOPPY%d.IMG[f=%ld]\r\n",
-                                    i,
-                                    floppy_image_file_cltbl[i][0]);
-#endif                                
-
-                            f_close(&floppy_drives[i].image_file);
-                        }
-                    } else {
-#ifdef DEBUG
-                        printf("NOT FOUND OR BAD SIZE FLOPPY%d.IMG\r\n", i);
-#endif                                                    
-                    }
-                }
-            }
-
-            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                if (f_stat(hard_image_file_names[i], &file_info) == FR_OK) {
-                    FSIZE_t size = file_info.fsize;
-
-                    if (size > HARD_CYLINDER_SIZE_BYTES) {
-                        if (
-                                f_open(&hard_drives[i].image_file, hard_image_file_names[i], FA_READ | FA_WRITE) == FR_OK &&
-                                setup_clmt(&hard_drives[i].image_file, hard_image_file_cltbl[i], HARD_IMAGE_FILE_CLTBL_SIZE) == FR_OK &&
-                                f_lseek(&hard_drives[i].image_file, CREATE_LINKMAP) == FR_OK) {
-                            hard_drives[i].drive_type_fun8h = 0;
-                            hard_drives[i].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
-
-                            hard_drives[i].number_of_heads = HARD_NUMBER_OF_HEADS;
-                            hard_drives[i].number_of_sectors = HARD_NUMBER_OF_SECTORS;
-                            hard_drives[i].number_of_cylinders = size / HARD_CYLINDER_SIZE_BYTES;
-
-                            if (hard_drives[i].number_of_cylinders > HARD_MAX_NUMBER_OF_CYLINDERS)
-                                hard_drives[i].number_of_cylinders = HARD_MAX_NUMBER_OF_CYLINDERS;
-
-#ifdef DEBUG
-                            printf("MOUNTED HARD%d.IMG[c=%d,h=%d,s=%d,f=%ld]\r\n",
-                                    i,
-                                    hard_drives[i].number_of_cylinders,
-                                    hard_drives[i].number_of_heads,
-                                    hard_drives[i].number_of_sectors,
-                                    hard_image_file_cltbl[i][0]);
-#endif                                
-                        } else {
-#ifdef DEBUG
-                            printf("TOO MANY FRAGMENTS HARD%d.IMG[f=%ld]\r\n",
-                                    i,
-                                    hard_image_file_cltbl[i][0]);
-#endif                                
-                            f_close(&hard_drives[i].image_file);
-                        }
-                    } else {
-#ifdef DEBUG
-                        printf("BAD SIZE HARD%d.IMG\r\n", i);
-#endif                                                    
-                    }
-
-                } else {
-#ifdef DEBUG
-                    printf("NOT FOUND HARD%d.IMG\r\n", i);
-#endif                                                    
-                }
-            }
-
-            struct Drive* drive = NULL;
-            uint32_t lba = 0;
-            uint32_t sector = 0;
-
-            struct MultisectorTransfer read_mst;
-            init_transfer(&read_mst, stop_read_sectors, start_read_sectors, read_next_sector);
-
+        if (SD_SPI_IsMediaPresent() && init_drives()) {
             while (SD_SPI_IsMediaPresent()) {
-                stop_transfer_if_expired(&read_mst);
-
-                if (ctrl->request != CTRL_REQUEST_DONE) {
-                    ctrl->status = CTRL_STATUS_BUSY;
-                    LED_SetLow();
-                    switch (ctrl->request) {
-                        case CTRL_REQUEST_CHECK:
-#ifdef DEBUG
-                            printf("CHECK\r\n");
-#endif
-                            invert_buffer(data_buffer);
-                            invert_buffer(data_buffer_1);
-                            break;
-
-                        case CTRL_REQUEST_SCAN:
-#ifdef DEBUG
-                            printf("SCAN\r\n");
-#endif
-                            ctrl->req.scan_req.number_of_floppy_drives = 0;
-
-                            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                                if (has_geometry(&floppy_drives[i])) {
-                                    ctrl->req.scan_req.number_of_floppy_drives++;
-                                }
-                            }
-
-                            ctrl->req.scan_req.number_of_hard_drives = 0;
-
-                            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                                if (has_geometry(&hard_drives[i])) {
-                                    ctrl->req.scan_req.number_of_hard_drives++;
-                                }
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_RESET:
-#ifdef DEBUG
-                            printf("RESET[d=%d]\r\n", ctrl->req.rwv_req.drive_number);
-#endif
-                            ctrl->req.rwv_req.status = 0;
-
-                            break;
-
-                        case CTRL_REQUEST_READ:
-                            drive = find_drive(ctrl->req.rwv_req.drive_number);
-
-#ifdef DEBUG
-                            printf(
-                                    "READ[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
-                                    ctrl->req.rwv_req.drive_number,
-                                    ctrl->req.rwv_req.low_cylinder_number,
-                                    ctrl->req.rwv_req.head_number,
-                                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
-                                    ctrl->req.rwv_req.sectors_count
-                                    );
-#endif
-
-                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba))) {
-#ifdef DEBUG
-                                printf("[no lba]\r\n");
-#endif
-                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                break;
-                            }
-
-
-                        case CTRL_REQUEST_READ_NEXT:
-#ifdef DEBUG
-                            if (ctrl->request == CTRL_REQUEST_READ_NEXT) {
-                                printf("READ_NEXT[lct=%d,sct=%d]",
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                        ctrl->req.rwv_req.sectors_count);
-                            }
-#endif
-                            ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
-
-                            if (ctrl->req.rwv_req.sectors_count != 0) {
-                                uint32_t sectors_to_read = ctrl->req.rwv_req.sectors_count;
-                                if (sectors_to_read > 2) sectors_to_read = 2;
-
-                                ctrl->req.rwv_req.status = 0;
-
-                                for (uint32_t i = 0; i < sectors_to_read; i++) {
-                                    if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
-                                        if (transfer_next_sector(&read_mst, sector, i == 0 ? data_buffer : data_buffer_1)) {
-                                            ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
-                                            ctrl->req.rwv_req.sectors_count--;
-
-#ifdef DEBUG
-                                            printf("[lba=%lu]", lba);
-#endif
-
-                                            lba++;
-                                        } else {
-#ifdef DEBUG
-                                            printf("[read error]");
-#endif
-                                            ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                            break;
-                                        }
-                                    } else {
-#ifdef DEBUG
-                                        printf("[no sector]");
-#endif
-                                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                        break;
-                                    }
-                                }
-#ifdef DEBUG
-                                printf("[lct=%d,sct=%d]\r\n",
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                        ctrl->req.rwv_req.sectors_count);
-#endif
-
-                            } else {
-#ifdef DEBUG
-                                printf("[nothing to read]\r\n");
-#endif
-                                ctrl->req.rwv_req.status = 0;
-                                break;
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_WRITE:
-                            drive = find_drive(ctrl->req.rwv_req.drive_number);
-#ifdef DEBUG
-                            printf(
-                                    "WRITE[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
-                                    ctrl->req.rwv_req.drive_number,
-                                    ctrl->req.rwv_req.low_cylinder_number,
-                                    ctrl->req.rwv_req.head_number,
-                                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
-                                    ctrl->req.rwv_req.sectors_count
-                                    );
-#endif
-
-                            if (drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba)) {
-                                if (drive->read_only) {
-#ifdef DEBUG
-                                    printf("[write protected]\r\n");
-#endif
-                                    ctrl->req.rwv_req.status = STATUS_WRITE_PROTECTED;
-                                } else {
-                                    ctrl->req.rwv_req.status = 0;
-                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
-                                    if (ctrl->req.rwv_req.sectors_count != 0) {
-                                        uint32_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
-                                        if (sectors_to_write > 2) sectors_to_write = 2;
-
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count += sectors_to_write;
-                                        ctrl->req.rwv_req.sectors_count -= sectors_to_write;
-
-#ifdef DEBUG
-                                        printf("[nct=%d,sct=%d]\r\n",
-                                                ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                                ctrl->req.rwv_req.sectors_count);
-#endif
-
-                                    } else {
-#ifdef DEBUG
-                                        printf("[nothing to write]\r\n");
-#endif                                        
-                                    }
-                                }
-                            } else {
-#ifdef DEBUG
-                                printf("[no lba]\r\n");
-#endif
-                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_WRITE_NEXT:
-#ifdef DEBUG
-                            printf("WRITE_NEXT[nct=%d,sct=%d]",
-                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                    ctrl->req.rwv_req.sectors_count);
-#endif
-
-                            stop_transfer(&read_mst);
-
-                            if (ctrl->req.rwv_req.sectors_last_rv_next_w_count == 0) {
-#ifdef DEBUG
-                                printf("[nothing to write]\r\n");
-#endif                                        
-
-                                ctrl->req.rwv_req.status = 0;
-                            } else {
-                                ctrl->req.rwv_req.status = 0;
-
-                                for (uint32_t i = 0; i < ctrl->req.rwv_req.sectors_last_rv_next_w_count; i++) {
-
-                                    if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
-                                        if (SD_SPI_SectorWrite(sector, i == 0 ? data_buffer : data_buffer_1, 1)) {
-#ifdef DEBUG
-                                            printf("[lba=%lu]", lba);
-#endif
-
-                                            lba++;
-                                        } else {
-#ifdef DEBUG
-                                            printf("[write error]");
-#endif                                        
-
-                                            ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                            break;
-
-                                        }
-                                    } else {
-#ifdef DEBUG
-                                        printf("[no sector]");
-#endif                                        
-
-                                        ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                        break;
-                                    }
-                                }
-
-                                ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
-
-                                if (ctrl->req.rwv_req.status == 0 && ctrl->req.rwv_req.sectors_count != 0) {
-                                    uint32_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
-                                    if (sectors_to_write > 2) sectors_to_write = 2;
-
-                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count += sectors_to_write;
-                                    ctrl->req.rwv_req.sectors_count -= sectors_to_write;
-
-                                }
-#ifdef DEBUG
-                                printf("[nct=%d,sct=%d]\r\n",
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                        ctrl->req.rwv_req.sectors_count);
-#endif                                    
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_VERIFY:
-                            drive = find_drive(ctrl->req.rwv_req.drive_number);
-#ifdef DEBUG
-                            printf(
-                                    "VERIFY[d=%d,lc=%d,h=%d,shc=%d,sct=%d]",
-                                    ctrl->req.rwv_req.drive_number,
-                                    ctrl->req.rwv_req.low_cylinder_number,
-                                    ctrl->req.rwv_req.head_number,
-                                    ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
-                                    ctrl->req.rwv_req.sectors_count
-                                    );
-#endif
-
-                            if (!(drive && has_image(drive) && chs_to_lba(drive, &ctrl->req.rwv_req, &lba))) {
-#ifdef DEBUG
-                                printf("[no lba]\r\n");
-#endif
-                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                break;
-                            }
-
-                        case CTRL_REQUEST_VERIFY_NEXT:
-#ifdef DEBUG
-                            if (ctrl->request == CTRL_REQUEST_VERIFY_NEXT) {
-                                printf("VERIFY_NEXT[lct=%d,sct=%d]",
-                                        ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                        ctrl->req.rwv_req.sectors_count);
-                            }
-#endif
-                            ctrl->req.rwv_req.sectors_last_rv_next_w_count = 0;
-
-                            if (ctrl->req.rwv_req.sectors_count != 0) {
-                                if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
-
-                                    ctrl->req.rwv_req.sectors_last_rv_next_w_count++;
-                                    ctrl->req.rwv_req.sectors_count--;
-
-#ifdef DEBUG
-                                    printf("[lba=%lu,lct=%d,sct=%d]\r\n",
-                                            lba,
-                                            ctrl->req.rwv_req.sectors_last_rv_next_w_count,
-                                            ctrl->req.rwv_req.sectors_count);
-#endif
-
-                                    lba++;
-
-                                    ctrl->req.rwv_req.status = 0;
-                                } else {
-#ifdef DEBUG
-                                    printf("[no sector]\r\n");
-#endif
-                                    ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                                }
-                            } else {
-#ifdef DEBUG
-                                printf("[nothing to verify]\r\n");
-#endif
-
-                                ctrl->req.rwv_req.status = 0;
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_READ_PARAMS_FUN8H:
-                            ctrl->req.read_params_fun8h_req.number_of_drives = 0;
-
-                            if (is_hard_drive(ctrl->req.read_params_fun8h_req.drive_number)) {
-                                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                                    if (has_geometry(&hard_drives[i])) {
-                                        ctrl->req.read_params_fun8h_req.number_of_drives++;
-                                    }
-                                }
-                            } else {
-                                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                                    if (has_geometry(&floppy_drives[i])) {
-                                        ctrl->req.read_params_fun8h_req.number_of_drives++;
-                                    }
-                                }
-                            }
-
-                            drive = find_drive(ctrl->req.read_params_fun8h_req.drive_number);
-
-#ifdef DEBUG
-                            printf(
-                                    "READ_PARAMS_FUN8H[d=%d]",
-                                    ctrl->req.read_params_fun8h_req.drive_number
-                                    );
-#endif                                
-
-                            if (drive && has_geometry(drive)) {
-                                set_params_fun8h(drive, &ctrl->req.read_params_fun8h_req);
-#ifdef DEBUG
-                                printf(
-                                        "[mlc=%d,mh=%d,mshc=%d]\r\n",
-                                        ctrl->req.read_params_fun8h_req.max_low_cylinder_number,
-                                        ctrl->req.read_params_fun8h_req.max_head_number,
-                                        ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers
-                                        );
-#endif                                
-                            } else {
-#ifdef DEBUG
-                                printf("[no geometry]\r\n");
-#endif                                
-                                ctrl->req.read_params_fun8h_req.success = 0;
-                                ctrl->req.read_params_fun8h_req.drive_type = 0;
-                                ctrl->req.read_params_fun8h_req.max_low_cylinder_number = 0;
-                                ctrl->req.read_params_fun8h_req.max_head_number = 0;
-                                ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers = 0;
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_READ_PARAMS_FUN15H:
-                            drive = find_drive(ctrl->req.read_params_fun15h_req.drive_number);
-#ifdef DEBUG
-                            printf(
-                                    "READ_PARAMS_FUN15H[d=%d]",
-                                    ctrl->req.read_params_fun15h_req.drive_number
-                                    );
-#endif
-
-                            if (drive && has_geometry(drive)) {
-#ifdef DEBUG
-                                printf("[t=%d]\r\n", drive->drive_type_fun15h);
-#endif
-
-                                ctrl->req.read_params_fun15h_req.success = 1;
-                                ctrl->req.read_params_fun15h_req.drive_type = drive->drive_type_fun15h;
-                            } else {
-#ifdef DEBUG
-                                printf("[no geometry]\r\n");
-#endif
-                                ctrl->req.read_params_fun15h_req.success = 0;
-                                ctrl->req.read_params_fun15h_req.drive_type = 0;
-                            }
-
-                            break;
-
-                        case CTRL_REQUEST_DETECT_MEDIA_CHANGE:
-                            drive = find_drive(ctrl->req.detect_media_change.drive_number);
-#ifdef DEBUG
-                            printf(
-                                    "DETECT_MEDIA_CHANGE[d=%d",
-                                    ctrl->req.detect_media_change.drive_number
-                                    );
-#endif
-
-                            if (drive && has_image(drive)) {
-                                if (drive->media_changed) {
-                                    drive->media_changed = false;
-#ifdef DEBUG
-                                    printf("[media changed]\r\n");
-#endif
-                                    ctrl->req.detect_media_change.status = STATUS_DISK_CHANGED;
-                                } else {
-#ifdef DEBUG
-                                    printf("[media not changed]\r\n");
-#endif
-                                    ctrl->req.detect_media_change.status = 0;
-                                }
-                            } else {
-                                ctrl->req.rwv_req.status = STATUS_BAD_SECTOR;
-                            }
-                            break;
-
-                        default:
-#ifdef DEBUG
-                            printf("UNKNOWN REQUEST %d\r\n", ctrl->request);
-#endif
-                            break;
-                    }
-                    ctrl->status = CTRL_STATUS_READY;
-                    REQ_COMPLETE_SetHigh();
-                    while (ctrl->request != CTRL_REQUEST_DONE);
-                    REQ_COMPLETE_SetLow();
-                    LED_SetHigh();
-                }
+                wait_or_handle_ctrl_request(
+                        ctrl,
+                        wait_media_present,
+                        handle_media_present
+                        );
             }
 
-            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (has_image(&floppy_drives[i])) {
-                    f_close(&floppy_drives[i].image_file);
-                }
-            }
-
-            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                if (has_image(&hard_drives[i])) {
-                    f_close(&hard_drives[i].image_file);
-                }
-            }
-
-            stop_transfer(&read_mst);
-            f_mount(0, "0:", 0);
-
-#ifdef DEBUG
-            printf("UNMOUNTED\r\n");
-#endif            
+            abort_transfer(&read_mst);
+            abort_transfer(&write_mst);
+            clear_drives();
         } else {
-            if (ctrl->request != CTRL_REQUEST_DONE) {
-                ctrl->status = CTRL_STATUS_BUSY;
-                LED_SetLow();
-                switch (ctrl->request) {
-                    case CTRL_REQUEST_CHECK:
-                        invert_buffer(data_buffer);
-                        invert_buffer(data_buffer_1);
-                        break;
-
-                    case CTRL_REQUEST_SCAN:
-                        ctrl->req.scan_req.number_of_floppy_drives = 0;
-                        ctrl->req.scan_req.number_of_hard_drives = 0;
-                        break;
-
-                    case CTRL_REQUEST_RESET:
-                    case CTRL_REQUEST_READ:
-                    case CTRL_REQUEST_WRITE:
-                    case CTRL_REQUEST_VERIFY:
-                        ctrl->req.rwv_req.status = STATUS_CONTROLLER_FAILED;
-                        break;
-
-                    case CTRL_REQUEST_READ_PARAMS_FUN8H:
-                        ctrl->req.read_params_fun8h_req.number_of_drives = 0;
-                        ctrl->req.read_params_fun8h_req.success = 0;
-                        break;
-
-                    case CTRL_REQUEST_READ_PARAMS_FUN15H:
-                        ctrl->req.read_params_fun15h_req.success = 0;
-                        break;
-
-                    default:
-                        break;
-
-                }
-                ctrl->status = CTRL_STATUS_READY;
-                REQ_COMPLETE_SetHigh();
-                while (ctrl->request != CTRL_REQUEST_DONE);
-                REQ_COMPLETE_SetLow();
-                LED_SetHigh();
-            }
-
+            wait_or_handle_ctrl_request(
+                    ctrl,
+                    wait_media_not_present,
+                    handle_media_not_present
+                    );
         }
     }
 }
