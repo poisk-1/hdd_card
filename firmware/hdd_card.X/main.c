@@ -48,32 +48,30 @@
 static FATFS fs;
 
 #define CTRL_BUFFER_SIZE 0x100
-#define DATA_BUFFER_SIZE 0x200
+#define SECTOR_SIZE 0x200
+#define BUFFER_SECTORS 7
+#define DATA_BUFFER_SIZE (SECTOR_SIZE * BUFFER_SECTORS)
+#define IO_BUFFER_SIZE (CTRL_BUFFER_SIZE + DATA_BUFFER_SIZE)
 
-static uint8_t ctrl_buffer[CTRL_BUFFER_SIZE];
-#if (FF_MAX_SS != DATA_BUFFER_SIZE)
-#error "FF_MAX_SS must be same as DATA_BUFFER_SIZE"
-#endif
-#define data_buffer fs.win
+static uint8_t io_buffer[IO_BUFFER_SIZE];
 
-static uint8_t data_buffer_1[DATA_BUFFER_SIZE];
-
-static uint8_t *buffer_segments[] = {ctrl_buffer, data_buffer, &data_buffer[0x100], data_buffer_1, &data_buffer_1[0x100]};
+static uint8_t *ctrl_buffer = &io_buffer[0];
+static uint8_t *data_buffer = &io_buffer[CTRL_BUFFER_SIZE];
 
 #define ACK_IO_Strobe() {ACK_IO_SetLow();ACK_IO_SetHigh();}
 
 void __interrupt() INTERRUPT_InterruptManager(void) {
     if (PIE1bits.INT0IE == 1 && PIR1bits.INT0IF == 1) {
-        EXT_INT0_InterruptFlagClear();
+        EXT_INT0_InterruptFlagClear();        
         TRISA = 0x00;
-        PORTA = buffer_segments[PORTB & 0xf][PORTD];
+        PORTA = io_buffer[((PORTB & 0xf) << 8) | PORTD];
 
         ACK_IO_Strobe();
 
         TRISA = 0xff;
     } else if (PIE6bits.INT1IE == 1 && PIR6bits.INT1IF == 1) {
         EXT_INT1_InterruptFlagClear();
-        buffer_segments[PORTB & 0xf][PORTD] = PORTA;
+        io_buffer[((PORTB & 0xf) << 8) | PORTD] = PORTA;
 
         ACK_IO_Strobe();
     }
@@ -107,8 +105,8 @@ enum DriveReqStatus {
     STATUS_CONTROLLER_FAILED = 0x20
 };
 
-void invert_buffer(uint8_t *buffer) {
-    for (size_t i = 0; i < DATA_BUFFER_SIZE; i++) {
+void invert_buffer(uint8_t *buffer, size_t size) {
+    for (size_t i = 0; i < size; i++) {
         buffer[i] = ~buffer[i];
     }
 }
@@ -727,8 +725,7 @@ static void handle_media_present(struct Ctrl *ctrl) {
 #ifdef DEBUG
             printf("CHECK\r\n");
 #endif
-            invert_buffer(data_buffer);
-            invert_buffer(data_buffer_1);
+            invert_buffer(data_buffer, DATA_BUFFER_SIZE);
             break;
 
         case CTRL_REQUEST_SCAN:
@@ -797,11 +794,11 @@ static void handle_media_present(struct Ctrl *ctrl) {
 
             if (ctrl->req.rwv_req.sectors_count != 0) {
                 uint8_t sectors_to_read = ctrl->req.rwv_req.sectors_count;
-                if (sectors_to_read > 2) sectors_to_read = 2;
+                if (sectors_to_read > BUFFER_SECTORS) sectors_to_read = BUFFER_SECTORS;
 
                 for (uint8_t i = 0; i < sectors_to_read; i++) {
-                    if (offset2sector(&current_read_drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * current_read_lba, &current_read_sector) == FR_OK) {
-                        if (transfer_next_sector(&read_mst, current_read_sector, i == 0 ? data_buffer : data_buffer_1)) {
+                    if (offset2sector(&current_read_drive->image_file, (FSIZE_t) SECTOR_SIZE * current_read_lba, &current_read_sector) == FR_OK) {
+                        if (transfer_next_sector(&read_mst, current_read_sector, &data_buffer[i * SECTOR_SIZE])) {
                             ctrl->req.rwv_req.sectors_last_r_next_w_count++;
                             ctrl->req.rwv_req.sectors_count--;
 
@@ -864,7 +861,7 @@ static void handle_media_present(struct Ctrl *ctrl) {
                 } else {
                     if (ctrl->req.rwv_req.sectors_count != 0) {
                         uint8_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
-                        if (sectors_to_write > 2) sectors_to_write = 2;
+                        if (sectors_to_write > BUFFER_SECTORS) sectors_to_write = BUFFER_SECTORS;
 
                         ctrl->req.rwv_req.sectors_last_r_next_w_count += sectors_to_write;
                         ctrl->req.rwv_req.sectors_count -= sectors_to_write;
@@ -901,8 +898,8 @@ static void handle_media_present(struct Ctrl *ctrl) {
 
             if (ctrl->req.rwv_req.sectors_last_r_next_w_count != 0) {
                 for (uint8_t i = 0; i < ctrl->req.rwv_req.sectors_last_r_next_w_count; i++) {
-                    if (offset2sector(&current_write_drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * current_write_lba, &current_write_sector) == FR_OK) {
-                        if (transfer_next_sector(&write_mst, current_write_sector, i == 0 ? data_buffer : data_buffer_1)) {
+                    if (offset2sector(&current_write_drive->image_file, (FSIZE_t) SECTOR_SIZE * current_write_lba, &current_write_sector) == FR_OK) {
+                        if (transfer_next_sector(&write_mst, current_write_sector, &data_buffer[i * SECTOR_SIZE])) {
 #ifdef DEBUG
                             printf("[lba=%lu]", current_write_lba);
 #endif
@@ -928,7 +925,7 @@ static void handle_media_present(struct Ctrl *ctrl) {
 
                 if (ctrl->req.rwv_req.status == 0 && ctrl->req.rwv_req.sectors_count != 0) {
                     uint8_t sectors_to_write = ctrl->req.rwv_req.sectors_count;
-                    if (sectors_to_write > 2) sectors_to_write = 2;
+                    if (sectors_to_write > BUFFER_SECTORS) sectors_to_write = BUFFER_SECTORS;
 
                     ctrl->req.rwv_req.sectors_last_r_next_w_count += sectors_to_write;
                     ctrl->req.rwv_req.sectors_count -= sectors_to_write;
@@ -969,7 +966,7 @@ static void handle_media_present(struct Ctrl *ctrl) {
                 ctrl->req.rwv_req.status = 0;
 
                 while (ctrl->req.rwv_req.sectors_count != 0) {
-                    if (offset2sector(&drive->image_file, (FSIZE_t) DATA_BUFFER_SIZE * lba, &sector) == FR_OK) {
+                    if (offset2sector(&drive->image_file, (FSIZE_t) SECTOR_SIZE * lba, &sector) == FR_OK) {
 #ifdef DEBUG
                         printf("[lba=%lu]", lba);
 #endif
@@ -1107,8 +1104,7 @@ static void wait_media_not_present() {
 static void handle_media_not_present(struct Ctrl *ctrl) {
     switch (ctrl->request) {
         case CTRL_REQUEST_CHECK:
-            invert_buffer(data_buffer);
-            invert_buffer(data_buffer_1);
+            invert_buffer(data_buffer, DATA_BUFFER_SIZE);
             break;
 
         case CTRL_REQUEST_SCAN:
