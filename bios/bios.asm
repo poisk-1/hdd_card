@@ -67,6 +67,7 @@ ctrl_request_read_params_fun15h:    equ 0x0a
 ctrl_request_detect_media_change:   equ 0x0b
 
 io_offset: equ 0x1000 ; reserve 4K for BIOS
+io_size: equ 0x2000 ; 8K for IO
 
 struc io_ctrl, io_offset
 	.status resb 1
@@ -118,10 +119,10 @@ struc io_ctrl_detect_media_change_req, io_ctrl_req_offset
     .status resb 1
 endstruc
 
-io_ctrl_buffer_size: equ 0x100
+io_ctrl_buffer_size: equ 0x200
 
 io_data: equ io_offset + io_ctrl_buffer_size
-io_data_size: equ 0x400
+io_data_size: equ io_size - io_ctrl_buffer_size
 
 	; DS must point to IO memory
 %macro SubmitIo 1
