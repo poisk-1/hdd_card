@@ -4,11 +4,13 @@
     <configuration>
         <data xmlns="http://www.netbeans.org/ns/make-project/1">
             <name>hdd_card</name>
-            <creation-uuid>ce1e3cf2-2062-4e55-930f-535bb6a97ad6</creation-uuid>
+            <creation-uuid>82aa71a2-25d5-49ab-92b6-4de00f88eda3</creation-uuid>
             <make-project-type>0</make-project-type>
-            <sourceEncoding>ISO-8859-1</sourceEncoding>
+            <sourceEncoding>UTF-8</sourceEncoding>
             <make-dep-projects/>
-            <sourceRootList/>
+            <sourceRootList>
+                <sourceRootElem>mcc_generated_files</sourceRootElem>
+            </sourceRootList>
             <confList>
                 <confElem>
                     <name>default</name>

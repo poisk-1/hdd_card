@@ -1,24 +1,26 @@
 /**
-  @Generated PIC10 / PIC12 / PIC16 / PIC18 MCUs Header File
+  Generated Interrupt Manager Source File
 
   @Company:
     Microchip Technology Inc.
 
   @File Name:
-    mcc.c
+    interrupt_manager.c
 
   @Summary:
-    This is the device_config.h file generated using PIC10 / PIC12 / PIC16 / PIC18 MCUs
+    This is the Interrupt Manager file generated using PIC10 / PIC12 / PIC16 / PIC18 MCUs
 
   @Description:
-    This header file provides implementations for driver APIs for all modules selected in the GUI.
+    This header file provides implementations for global interrupt handling.
+    For individual peripheral handlers please see the peripheral driver for
+    all modules selected in the GUI.
     Generation Information :
         Product Revision  :  PIC10 / PIC12 / PIC16 / PIC18 MCUs - 1.81.8
-        Device            :  PIC18F47Q10
-        Driver Version    :  2.00
+        Device            :  PIC18F47Q83
+        Driver Version    :  2.04
     The generated drivers are tested against the following:
         Compiler          :  XC8 2.36 and above or later
-        MPLAB             :  MPLAB X 6.00
+        MPLAB 	          :  MPLAB X 6.00
 */
 
 /*
@@ -44,12 +46,32 @@
     SOFTWARE.
 */
 
-#ifndef DEVICE_CONFIG_H
-#define	DEVICE_CONFIG_H
+#include "interrupt_manager.h"
+#include "mcc.h"
 
-#define _XTAL_FREQ 64000000
-
-#endif	/* DEVICE_CONFIG_H */
+void  INTERRUPT_Initialize (void)
+{
+    // Disable Interrupt Priority Vectors (16CXXX Compatibility Mode)
+    INTCON0bits.IPEN = 0;
+}
+/*
+void __interrupt() INTERRUPT_InterruptManager (void)
+{
+    // interrupt handler
+    if(PIE1bits.INT0IE == 1 && PIR1bits.INT0IF == 1)
+    {
+        INT0_ISR();
+    }
+    else if(PIE6bits.INT1IE == 1 && PIR6bits.INT1IF == 1)
+    {
+        INT1_ISR();
+    }
+    else
+    {
+        //Unhandled Interrupt
+    }
+}
+*/
 /**
  End of File
 */

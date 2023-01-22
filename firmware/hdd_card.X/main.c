@@ -14,7 +14,7 @@
     This header file provides implementations for driver APIs for all modules selected in the GUI.
     Generation Information :
         Product Revision  :  PIC10 / PIC12 / PIC16 / PIC18 MCUs - 1.81.8
-        Device            :  PIC18F47Q10
+        Device            :  PIC18F47Q83
         Driver Version    :  2.00
  */
 
@@ -62,19 +62,21 @@ static uint8_t *buffer_segments[] = {ctrl_buffer, data_buffer, &data_buffer[0x10
 
 #define ACK_IO_Strobe() {ACK_IO_SetLow();ACK_IO_SetHigh();}
 
-void handle_read(void) {
-    TRISA = 0x00;
-    PORTA = buffer_segments[PORTB & 0xf][PORTD];
+void __interrupt() INTERRUPT_InterruptManager(void) {
+    if (PIE1bits.INT0IE == 1 && PIR1bits.INT0IF == 1) {
+        EXT_INT0_InterruptFlagClear();
+        TRISA = 0x00;
+        PORTA = buffer_segments[PORTB & 0xf][PORTD];
 
-    ACK_IO_Strobe();
+        ACK_IO_Strobe();
 
-    TRISA = 0xff;
-}
+        TRISA = 0xff;
+    } else if (PIE6bits.INT1IE == 1 && PIR6bits.INT1IF == 1) {
+        EXT_INT1_InterruptFlagClear();
+        buffer_segments[PORTB & 0xf][PORTD] = PORTA;
 
-void handle_write(void) {
-    buffer_segments[PORTB & 0xf][PORTD] = PORTA;
-
-    ACK_IO_Strobe();
+        ACK_IO_Strobe();
+    }
 }
 
 enum Request {
@@ -328,10 +330,6 @@ void set_params_fun8h(const struct Drive* drive, struct ReadParamsFun8hReq* req)
     req->max_sector_and_high_cylinder_numbers =
             (uint8_t) (drive->number_of_sectors & SECTOR_NUMBER_MASK) |
             (uint8_t) (((drive->number_of_cylinders - 1) >> HIGH_CYLINDER_BITS) & HIGH_CYLINDER_NUMBER_MASK);
-}
-
-void putch(char c) {
-    EUSART1_Write(c);
 }
 
 #if FF_MAX_SS == FF_MIN_SS
@@ -713,17 +711,17 @@ static void handle_media_present(struct Ctrl *ctrl) {
     struct Drive* drive = NULL;
     uint32_t lba = 0;
     uint32_t sector = 0;
-    
+
     if (ctrl->request != CTRL_REQUEST_READ &&
-        ctrl->request != CTRL_REQUEST_READ_NEXT) {
+            ctrl->request != CTRL_REQUEST_READ_NEXT) {
         stop_transfer(&read_mst);
     }
 
     if (ctrl->request != CTRL_REQUEST_WRITE &&
-        ctrl->request != CTRL_REQUEST_WRITE_NEXT) {
-        stop_transfer(&write_mst);        
+            ctrl->request != CTRL_REQUEST_WRITE_NEXT) {
+        stop_transfer(&write_mst);
     }
-    
+
     switch (ctrl->request) {
         case CTRL_REQUEST_CHECK:
 #ifdef DEBUG
@@ -1353,12 +1351,6 @@ void main(void) {
 
     // Disable the Global Interrupts
     //INTERRUPT_GlobalInterruptDisable();
-
-    // Enable the Peripheral Interrupts
-    INTERRUPT_PeripheralInterruptEnable();
-
-    // Disable the Peripheral Interrupts
-    //INTERRUPT_PeripheralInterruptDisable();
 
     ACK_IO_Strobe();
 

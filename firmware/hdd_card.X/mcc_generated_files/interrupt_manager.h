@@ -16,7 +16,7 @@
     all modules selected in the GUI.
     Generation Information :
         Product Revision  :  PIC10 / PIC12 / PIC16 / PIC18 MCUs - 1.81.8
-        Device            :  PIC18F47Q10
+        Device            :  PIC18F47Q83
         Driver Version    :  2.03
     The generated drivers are tested against the following:
         Compiler          :  XC8 2.36 and above or later
@@ -60,7 +60,7 @@
  * @Example
     INTERRUPT_GlobalInterruptEnable();
  */
-#define INTERRUPT_GlobalInterruptEnable() (INTCONbits.GIE = 1)
+#define INTERRUPT_GlobalInterruptEnable() (INTCON0bits.GIE = 1)
 
 /**
  * @Param
@@ -72,30 +72,7 @@
  * @Example
     INTERRUPT_GlobalInterruptDisable();
  */
-#define INTERRUPT_GlobalInterruptDisable() (INTCONbits.GIE = 0)
-/**
- * @Param
-    none
- * @Returns
-    none
- * @Description
-    This macro will enable peripheral interrupts.
- * @Example
-    INTERRUPT_PeripheralInterruptEnable();
- */
-#define INTERRUPT_PeripheralInterruptEnable() (INTCONbits.PEIE = 1)
-
-/**
- * @Param
-    none
- * @Returns
-    none
- * @Description
-    This macro will disable peripheral interrupts.
- * @Example
-    INTERRUPT_PeripheralInterruptDisable();
- */
-#define INTERRUPT_PeripheralInterruptDisable() (INTCONbits.PEIE = 0)
+#define INTERRUPT_GlobalInterruptDisable() (INTCON0bits.GIE = 0)
 
 /**
  * @Param

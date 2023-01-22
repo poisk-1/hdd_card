@@ -14,7 +14,7 @@
      This source file provides implementations for driver APIs for EXT_INT.
      Generation Information :
          Product Revision  :  PIC10 / PIC12 / PIC16 / PIC18 MCUs - 1.81.8
-         Device            :  PIC18F47Q10
+         Device            :  PIC18F47Q83
          Driver Version    :  1.11
      The generated drivers are tested against the following:
          Compiler          :  XC8 2.36 and above
@@ -90,7 +90,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT0_InterruptFlagClear()       (PIR0bits.INT0IF = 0)
+#define EXT_INT0_InterruptFlagClear()       (PIR1bits.INT0IF = 0)
 
 /**
   @Summary
@@ -123,7 +123,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT0_InterruptDisable()     (PIE0bits.INT0IE = 0)
+#define EXT_INT0_InterruptDisable()     (PIE1bits.INT0IE = 0)
 
 /**
   @Summary
@@ -154,7 +154,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT0_InterruptEnable()       (PIE0bits.INT0IE = 1)
+#define EXT_INT0_InterruptEnable()       (PIE1bits.INT0IE = 1)
 
 /**
   @Summary
@@ -185,7 +185,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT0_risingEdgeSet()          (INTCONbits.INT0EDG = 1)
+#define EXT_INT0_risingEdgeSet()          (INTCON0bits.INT0EDG = 1)
 
 /**
   @Summary
@@ -216,7 +216,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT0_fallingEdgeSet()          (INTCONbits.INT0EDG = 0)
+#define EXT_INT0_fallingEdgeSet()          (INTCON0bits.INT0EDG = 0)
 /**
   @Summary
     Clears the interrupt flag for INT1
@@ -245,7 +245,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT1_InterruptFlagClear()       (PIR0bits.INT1IF = 0)
+#define EXT_INT1_InterruptFlagClear()       (PIR6bits.INT1IF = 0)
 
 /**
   @Summary
@@ -278,7 +278,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT1_InterruptDisable()     (PIE0bits.INT1IE = 0)
+#define EXT_INT1_InterruptDisable()     (PIE6bits.INT1IE = 0)
 
 /**
   @Summary
@@ -309,7 +309,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT1_InterruptEnable()       (PIE0bits.INT1IE = 1)
+#define EXT_INT1_InterruptEnable()       (PIE6bits.INT1IE = 1)
 
 /**
   @Summary
@@ -340,7 +340,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT1_risingEdgeSet()          (INTCONbits.INT1EDG = 1)
+#define EXT_INT1_risingEdgeSet()          (INTCON0bits.INT1EDG = 1)
 
 /**
   @Summary
@@ -371,7 +371,7 @@ extern "C" {
     </code>
 
 */
-#define EXT_INT1_fallingEdgeSet()          (INTCONbits.INT1EDG = 0)
+#define EXT_INT1_fallingEdgeSet()          (INTCON0bits.INT1EDG = 0)
 /**
     Section: External Interrupt Initializers
  */

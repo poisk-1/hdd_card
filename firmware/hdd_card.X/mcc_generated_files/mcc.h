@@ -1,26 +1,24 @@
 /**
-  Generated Interrupt Manager Source File
+  @Generated PIC10 / PIC12 / PIC16 / PIC18 MCUs Header File
 
   @Company:
     Microchip Technology Inc.
 
   @File Name:
-    interrupt_manager.c
+    mcc.h
 
   @Summary:
-    This is the Interrupt Manager file generated using PIC10 / PIC12 / PIC16 / PIC18 MCUs
+    This is the mcc.h file generated using PIC10 / PIC12 / PIC16 / PIC18 MCUs
 
   @Description:
-    This header file provides implementations for global interrupt handling.
-    For individual peripheral handlers please see the peripheral driver for
-    all modules selected in the GUI.
+    This header file provides implementations for driver APIs for all modules selected in the GUI.
     Generation Information :
         Product Revision  :  PIC10 / PIC12 / PIC16 / PIC18 MCUs - 1.81.8
-        Device            :  PIC18F47Q10
-        Driver Version    :  2.04
+        Device            :  PIC18F47Q83
+        Driver Version    :  2.00
     The generated drivers are tested against the following:
         Compiler          :  XC8 2.36 and above or later
-        MPLAB 	          :  MPLAB X 6.00
+        MPLAB             :  MPLAB X 6.00
 */
 
 /*
@@ -46,53 +44,65 @@
     SOFTWARE.
 */
 
+#ifndef MCC_H
+#define	MCC_H
+#include <xc.h>
+#include "device_config.h"
+#include "pin_manager.h"
+#include <stdint.h>
+#include <stdbool.h>
+#include <conio.h>
 #include "interrupt_manager.h"
-#include "mcc.h"
+#include "ext_int.h"
+#include "uart1.h"
+#include "sd_spi/sd_spi.h"
+#include "fatfs/ff.h"
+#include "drivers/spi_master.h"
+#include "spi1.h"
 
-void  INTERRUPT_Initialize (void)
-{
-    // Disable Interrupt Priority Vectors (16CXXX Compatibility Mode)
-    INTCONbits.IPEN = 0;
-}
 
-extern void handle_read(void);
-extern void handle_write(void);
 
-void __interrupt() INTERRUPT_InterruptManager (void)
-{
-    // interrupt handler
-    if(PIE0bits.INT0IE == 1 && PIR0bits.INT0IF == 1)
-    {
-        //INT0_ISR();
-        EXT_INT0_InterruptFlagClear();
-        handle_read();
-    }
-    else if(PIE0bits.INT1IE == 1 && PIR0bits.INT1IF == 1)
-    {
-        //INT1_ISR();
-        EXT_INT1_InterruptFlagClear();
-        handle_write();
-    }
-    else if(INTCONbits.PEIE == 1)
-    {
-        if(PIE3bits.TX1IE == 1 && PIR3bits.TX1IF == 1)
-        {
-            EUSART1_TxDefaultInterruptHandler();
-        } 
-        else if(PIE3bits.RC1IE == 1 && PIR3bits.RC1IF == 1)
-        {
-            EUSART1_RxDefaultInterruptHandler();
-        } 
-        else
-        {
-            //Unhandled Interrupt
-        }
-    }      
-    else
-    {
-        //Unhandled Interrupt
-    }
-}
+/**
+ * @Param
+    none
+ * @Returns
+    none
+ * @Description
+    Initializes the device to the default states configured in the
+ *                  MCC GUI
+ * @Example
+    SYSTEM_Initialize(void);
+ */
+void SYSTEM_Initialize(void);
+
+/**
+ * @Param
+    none
+ * @Returns
+    none
+ * @Description
+    Initializes the oscillator to the default states configured in the
+ *                  MCC GUI
+ * @Example
+    OSCILLATOR_Initialize(void);
+ */
+void OSCILLATOR_Initialize(void);
+
+/**
+ * @Param
+    none
+ * @Returns
+    none
+ * @Description
+    Initializes the PMD module to the default states configured in the
+ *                  MCC GUI
+ * @Example
+    PMD_Initialize(void);
+ */
+void PMD_Initialize(void);
+
+
+#endif	/* MCC_H */
 /**
  End of File
 */
