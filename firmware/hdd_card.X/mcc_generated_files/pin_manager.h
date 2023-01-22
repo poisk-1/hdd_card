@@ -385,25 +385,45 @@
 #define SDCard_CS_SetAnalogMode()      do { ANSELCbits.ANSELC3 = 1; } while(0)
 #define SDCard_CS_SetDigitalMode()     do { ANSELCbits.ANSELC3 = 0; } while(0)
 
+// get/set SEL4 aliases
+#define SEL4_TRIS                 TRISCbits.TRISC4
+#define SEL4_LAT                  LATCbits.LATC4
+#define SEL4_PORT                 PORTCbits.RC4
+#define SEL4_WPU                  WPUCbits.WPUC4
+#define SEL4_OD                   ODCONCbits.ODCC4
+#define SEL4_ANS                  ANSELCbits.ANSELC4
+#define SEL4_SetHigh()            do { LATCbits.LATC4 = 1; } while(0)
+#define SEL4_SetLow()             do { LATCbits.LATC4 = 0; } while(0)
+#define SEL4_Toggle()             do { LATCbits.LATC4 = ~LATCbits.LATC4; } while(0)
+#define SEL4_GetValue()           PORTCbits.RC4
+#define SEL4_SetDigitalInput()    do { TRISCbits.TRISC4 = 1; } while(0)
+#define SEL4_SetDigitalOutput()   do { TRISCbits.TRISC4 = 0; } while(0)
+#define SEL4_SetPullup()          do { WPUCbits.WPUC4 = 1; } while(0)
+#define SEL4_ResetPullup()        do { WPUCbits.WPUC4 = 0; } while(0)
+#define SEL4_SetPushPull()        do { ODCONCbits.ODCC4 = 0; } while(0)
+#define SEL4_SetOpenDrain()       do { ODCONCbits.ODCC4 = 1; } while(0)
+#define SEL4_SetAnalogMode()      do { ANSELCbits.ANSELC4 = 1; } while(0)
+#define SEL4_SetDigitalMode()     do { ANSELCbits.ANSELC4 = 0; } while(0)
+
 // get/set SDCard_CD aliases
-#define SDCard_CD_TRIS                 TRISCbits.TRISC4
-#define SDCard_CD_LAT                  LATCbits.LATC4
-#define SDCard_CD_PORT                 PORTCbits.RC4
-#define SDCard_CD_WPU                  WPUCbits.WPUC4
-#define SDCard_CD_OD                   ODCONCbits.ODCC4
-#define SDCard_CD_ANS                  ANSELCbits.ANSELC4
-#define SDCard_CD_SetHigh()            do { LATCbits.LATC4 = 1; } while(0)
-#define SDCard_CD_SetLow()             do { LATCbits.LATC4 = 0; } while(0)
-#define SDCard_CD_Toggle()             do { LATCbits.LATC4 = ~LATCbits.LATC4; } while(0)
-#define SDCard_CD_GetValue()           PORTCbits.RC4
-#define SDCard_CD_SetDigitalInput()    do { TRISCbits.TRISC4 = 1; } while(0)
-#define SDCard_CD_SetDigitalOutput()   do { TRISCbits.TRISC4 = 0; } while(0)
-#define SDCard_CD_SetPullup()          do { WPUCbits.WPUC4 = 1; } while(0)
-#define SDCard_CD_ResetPullup()        do { WPUCbits.WPUC4 = 0; } while(0)
-#define SDCard_CD_SetPushPull()        do { ODCONCbits.ODCC4 = 0; } while(0)
-#define SDCard_CD_SetOpenDrain()       do { ODCONCbits.ODCC4 = 1; } while(0)
-#define SDCard_CD_SetAnalogMode()      do { ANSELCbits.ANSELC4 = 1; } while(0)
-#define SDCard_CD_SetDigitalMode()     do { ANSELCbits.ANSELC4 = 0; } while(0)
+#define SDCard_CD_TRIS                 TRISCbits.TRISC5
+#define SDCard_CD_LAT                  LATCbits.LATC5
+#define SDCard_CD_PORT                 PORTCbits.RC5
+#define SDCard_CD_WPU                  WPUCbits.WPUC5
+#define SDCard_CD_OD                   ODCONCbits.ODCC5
+#define SDCard_CD_ANS                  ANSELCbits.ANSELC5
+#define SDCard_CD_SetHigh()            do { LATCbits.LATC5 = 1; } while(0)
+#define SDCard_CD_SetLow()             do { LATCbits.LATC5 = 0; } while(0)
+#define SDCard_CD_Toggle()             do { LATCbits.LATC5 = ~LATCbits.LATC5; } while(0)
+#define SDCard_CD_GetValue()           PORTCbits.RC5
+#define SDCard_CD_SetDigitalInput()    do { TRISCbits.TRISC5 = 1; } while(0)
+#define SDCard_CD_SetDigitalOutput()   do { TRISCbits.TRISC5 = 0; } while(0)
+#define SDCard_CD_SetPullup()          do { WPUCbits.WPUC5 = 1; } while(0)
+#define SDCard_CD_ResetPullup()        do { WPUCbits.WPUC5 = 0; } while(0)
+#define SDCard_CD_SetPushPull()        do { ODCONCbits.ODCC5 = 0; } while(0)
+#define SDCard_CD_SetOpenDrain()       do { ODCONCbits.ODCC5 = 1; } while(0)
+#define SDCard_CD_SetAnalogMode()      do { ANSELCbits.ANSELC5 = 1; } while(0)
+#define SDCard_CD_SetDigitalMode()     do { ANSELCbits.ANSELC5 = 0; } while(0)
 
 // get/set RC6 procedures
 #define RC6_SetHigh()            do { LATCbits.LATC6 = 1; } while(0)

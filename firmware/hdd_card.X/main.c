@@ -49,7 +49,7 @@ static FATFS fs;
 
 #define CTRL_BUFFER_SIZE 0x100
 #define SECTOR_SIZE 0x200
-#define BUFFER_SECTORS 7
+#define BUFFER_SECTORS 15
 #define DATA_BUFFER_SIZE (SECTOR_SIZE * BUFFER_SECTORS)
 #define IO_BUFFER_SIZE (CTRL_BUFFER_SIZE + DATA_BUFFER_SIZE)
 
@@ -64,14 +64,14 @@ void __interrupt() INTERRUPT_InterruptManager(void) {
     if (PIE1bits.INT0IE == 1 && PIR1bits.INT0IF == 1) {
         EXT_INT0_InterruptFlagClear();        
         TRISA = 0x00;
-        PORTA = io_buffer[((PORTB & 0xf) << 8) | PORTD];
+        PORTA = io_buffer[(((PORTB & 0xf) | (PORTC & 0x10)) << 8) | PORTD];
 
         ACK_IO_Strobe();
 
         TRISA = 0xff;
     } else if (PIE6bits.INT1IE == 1 && PIR6bits.INT1IF == 1) {
         EXT_INT1_InterruptFlagClear();
-        io_buffer[((PORTB & 0xf) << 8) | PORTD] = PORTA;
+        io_buffer[(((PORTB & 0xf) | (PORTC & 0x10)) << 8) | PORTD] = PORTA;
 
         ACK_IO_Strobe();
     }
@@ -591,7 +591,7 @@ void stop_write_sectors() {
     end_transaction();
 }
 
-#define NEXT_TIMEOUT 2000
+#define NEXT_TIMEOUT 20000
 
 struct MultisectorTransfer {
     void (*stop)(void);

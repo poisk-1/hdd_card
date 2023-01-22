@@ -11,7 +11,7 @@ const size_t bios_base = 0xe0000;
 const size_t bios_size = 0x1000;
 
 const size_t io_base = bios_base + bios_size;
-const size_t io_size = 0x2100;
+const size_t io_size = 0x2000;
 
 const size_t sel_io_bit = 6;
 const size_t sel_bios_bit = 7;
@@ -44,7 +44,7 @@ int main(int argc, char **argv) {
       data = (~(1 << sel_bios_bit) & 0xff);
     }
     else if (address >= io_base && address < (io_base + io_size)) {
-      data = (~(1 << sel_io_bit) & 0xf0) | ((address >> 8) & 0xf);
+      data = (~(1 << sel_io_bit) & 0xe0) | (((address - io_base) >> 8) & 0x1f);
     }
 
     rom_buffer[address >> (address_bits - rom_bits)] = data;
