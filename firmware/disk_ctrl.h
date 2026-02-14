@@ -4,7 +4,7 @@
 
 #include "service.h"
 
-enum DiskRequest : uint8_t {
+enum DiskRequest {
     CTRL_REQUEST_CHECK = 0x1,
     CTRL_REQUEST_SCAN = 0x2,
     CTRL_REQUEST_RESET = 0x3,
@@ -18,7 +18,7 @@ enum DiskRequest : uint8_t {
     CTRL_REQUEST_DETECT_MEDIA_CHANGE = 0xb,
 };
 
-enum DriveReqStatus : uint8_t {
+enum DriveReqStatus {
     STATUS_NO_ERROR = 0,
     STATUS_BAD_SECTOR = 0x2,
     STATUS_WRITE_PROTECTED = 0x3,
@@ -34,7 +34,7 @@ struct RWVReq {
 
     uint8_t sectors_count;
 
-    enum DriveReqStatus status;
+    uint8_t status;
     uint8_t sectors_last_r_next_w_count;
 };
 
@@ -66,7 +66,7 @@ struct ReadParamsFun15hReq {
 struct DetectMediaChangeReq {
     uint8_t drive_number;
 
-    enum DriveReqStatus status;
+    uint8_t status;
 };
 
 union Req {
@@ -75,18 +75,6 @@ union Req {
     struct ReadParamsFun8hReq read_params_fun8h_req;
     struct ReadParamsFun15hReq read_params_fun15h_req;
     struct DetectMediaChangeReq detect_media_change;
-};
-
-enum DriveTypeFun8h : uint8_t {
-    FUN8H_DRIVE_TYPE_FLOPPY_360 = 1,
-    FUN8H_DRIVE_TYPE_FLOPPY_1200 = 2,
-    FUN8H_DRIVE_TYPE_FLOPPY_720 = 3,
-    FUN8H_DRIVE_TYPE_FLOPPY_1440 = 4
-};
-
-enum DriveTypeFun15h : uint8_t {
-    FUN15H_DRIVE_TYPE_FLOPPY_DISK = 2,
-    FUN15H_DRIVE_TYPE_HARD_DISK = 3
 };
 
 struct DiskCtrl {

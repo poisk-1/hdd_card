@@ -13,6 +13,7 @@
 #include "service.h"
 #include "log.h"
 #include "disk_service.h"
+#include "drive_info.h"
 
 void init() {
     /**
