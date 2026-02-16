@@ -7,7 +7,7 @@
 
 static uint8_t buffer[BUFFER_SIZE];
 
-void init_buffer(void) {
+void buffer_init(void) {
     memset(buffer, 0, BUFFER_SIZE);
 
     INT0PPS = 0x0C;   //RB4->EXT_INT:INT0;    
@@ -25,8 +25,8 @@ void init_buffer(void) {
     INTCON0bits.GIE = 1; 
 }
 
-void *get_ctrl_buffer(void) { return &buffer[0]; }
-void *get_data_buffer(void) { return &buffer[CTRL_BUFFER_SIZE]; }
+void *buffer_get_ctrl(void) { return &buffer[0]; }
+void *buffer_get_data(void) { return &buffer[CTRL_BUFFER_SIZE]; }
 
 #define ACK_IO LATEbits.LATE1
 #define ADDRESS ((((PORTB & 0xf) | (PORTC & 0x10)) << 8) | PORTD)

@@ -13,5 +13,5 @@ void invert_buffer(uint8_t *buffer, size_t size) {
 void check(void) {
     LOG("CHECK\r\n");
 
-    invert_buffer(get_data_buffer(), DATA_BUFFER_SIZE);
+    invert_buffer(buffer_get_data(), DATA_BUFFER_SIZE);
 }

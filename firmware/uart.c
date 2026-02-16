@@ -2,7 +2,7 @@
 
 #include "uart.h"
 
-void init_uart(void) {
+void uart_init(void) {
     RC6PPS = 0x20;   //RC6->UART1:TX1;    
     U1RXPPS = 0x17;   //RC7->UART1:RX1;    
 
@@ -38,7 +38,7 @@ void init_uart(void) {
     U1ERRIE = 0x00;
 }
 
-uint8_t read_uart1(void)
+uint8_t uart_read(void)
 {
     while(!PIR4bits.U1RXIF)
     {
@@ -53,7 +53,7 @@ uint8_t read_uart1(void)
     return U1RXB;
 }
 
-void write_uart1(uint8_t txData)
+void uart_write(uint8_t txData)
 {
     while(0 == PIR4bits.U1TXIF)
     {
@@ -64,10 +64,10 @@ void write_uart1(uint8_t txData)
 
 int getch(void)
 {
-    return read_uart1();
+    return uart_read();
 }
 
 void putch(char txData)
 {
-    write_uart1(txData);
+    uart_write(txData);
 }

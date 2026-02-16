@@ -3,4 +3,4 @@
 #include "service.h"
 
 void wait_no_media_present();
-void handle_no_media_present(struct BaseCtrl *ctrl);
+void handle_no_media_present(struct ServiceCtrlBase *ctrl);

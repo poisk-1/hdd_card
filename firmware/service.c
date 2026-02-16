@@ -5,16 +5,16 @@
 #define LED LATEbits.LATE0
 #define REQ_COMPLETE LATEbits.LATE2
 
-void wait_or_handle_ctrl_request(struct BaseCtrl *ctrl, void(*wait)(void), void(*handle)(struct BaseCtrl *)) {
-    if (ctrl->request == CTRL_REQUEST_DONE) {
+void service_wait_or_handle_ctrl_request(struct ServiceCtrlBase *ctrl, void(*wait)(void), void(*handle)(struct ServiceCtrlBase *)) {
+    if (ctrl->request == SERVICE_REQUEST_DONE) {
         wait();
     } else {
-        ctrl->status = CTRL_STATUS_BUSY;
+        ctrl->status = SERVICE_STATUS_BUSY;
         LED = 0;
         handle(ctrl);
-        ctrl->status = CTRL_STATUS_READY;
+        ctrl->status = SERVICE_STATUS_READY;
         REQ_COMPLETE = 1;
-        while (ctrl->request != CTRL_REQUEST_DONE);
+        while (ctrl->request != SERVICE_REQUEST_DONE);
         REQ_COMPLETE = 0;
         LED = 1;
     }
