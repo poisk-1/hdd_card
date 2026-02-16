@@ -72,9 +72,9 @@ enum DriveTypeFun15h {
     uint8_t drive_type_fun8h;
     uint8_t drive_type_fun15h;
 
-    uint32_t number_of_heads;
-    uint32_t number_of_sectors;
-    uint32_t number_of_cylinders;
+    uint8_t number_of_heads;
+    uint8_t number_of_sectors;
+    uint16_t number_of_cylinders;
 
     uint32_t card_offset;
 };
