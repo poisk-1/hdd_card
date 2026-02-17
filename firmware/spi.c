@@ -60,26 +60,25 @@ uint8_t spi_exchange_byte(uint8_t data)
     return SPI1RXB;
 }
 
-void spi_read_block(void *block, size_t block_size)
+void spi_read_block(void *buffer, size_t size)
 {
-    uint8_t *data = block;
-    while(block_size--)
-    {
+    uint8_t *ptr = buffer;
+    for (size_t i = 0; i < size; i++, ptr++) {
         SPI1TCNTL = 1;
         SPI1TXB = 0xFF;
         while(!PIR3bits.SPI1RXIF);
-        *data++ = SPI1RXB;
+        *ptr = SPI1RXB;
     }
 }
 
-void spi_write_block(void *block, size_t block_size)
+void spi_write_block(void *buffer, size_t size)
 {
-    uint8_t *data = block;
-    while(block_size--)
-    {
+    uint8_t *ptr = buffer;
+    uint8_t dummy;
+    for (size_t i = 0; i < size; i++, ptr++) {
         SPI1TCNTL = 1;
-        SPI1TXB = *data;
+        SPI1TXB = *ptr;
         while(!PIR3bits.SPI1RXIF);
-        data++;
+        dummy = SPI1RXB;
     }
 }
