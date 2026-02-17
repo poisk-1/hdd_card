@@ -310,9 +310,83 @@ void int13_service_handle_media_present(struct Int13hService *int13h_service, st
 
 
         case INT13H_SERVICE_REQUEST_WRITE:
+            drive_info = find_drive_info(&int13h_service->card_info, int13h_ctrl->req.rwv_req.drive_number);
+            LOG(
+                    "WRITE [d=%d,lc=%d,h=%d,shc=%d,sct=%d] ",
+                    int13h_ctrl->req.rwv_req.drive_number,
+                    int13h_ctrl->req.rwv_req.low_cylinder_number,
+                    int13h_ctrl->req.rwv_req.head_number,
+                    int13h_ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                    int13h_ctrl->req.rwv_req.sectors_count
+                    );
+
+            int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count = 0;
+            int13h_ctrl->req.rwv_req.status = 0;
+
+            if (drive_info != NULL && has_geometry(drive_info) && chs_to_block_address(drive_info, &int13h_ctrl->req.rwv_req, &int13h_service->current_write_block_address)) {
+                if (drive_info->read_only) {
+                    LOG(" [write protected]\r\n");
+                    int13h_ctrl->req.rwv_req.status = INT13H_STATUS_WRITE_PROTECTED;
+                } else {
+                    if (int13h_ctrl->req.rwv_req.sectors_count != 0) {
+                        uint8_t sectors_to_write = int13h_ctrl->req.rwv_req.sectors_count;
+                        if (sectors_to_write > BUFFER_SECTORS) sectors_to_write = BUFFER_SECTORS;
+
+                        int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count += sectors_to_write;
+                        int13h_ctrl->req.rwv_req.sectors_count -= sectors_to_write;
+
+                        LOG("[nct=%d,sct=%d]\r\n",
+                                int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                                int13h_ctrl->req.rwv_req.sectors_count);
+
+                    } else {
+                        LOG("[nothing to write]\r\n");
+                    }
+                }
+            } else {
+                LOG("[no lba]\r\n");
+                int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
+            }
+
+            break;
+
         case INT13H_SERVICE_REQUEST_WRITE_NEXT:
-            LOG("WRITE [no media]\r\n");
-            int13h_ctrl->req.rwv_req.status = INT13H_STATUS_CONTROLLER_FAILED;
+            LOG("WRITE_NEXT [nct=%d,sct=%d] ",
+                    int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                    int13h_ctrl->req.rwv_req.sectors_count);
+
+            int13h_ctrl->req.rwv_req.status = 0;
+
+            if (int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count != 0) {
+                for (uint8_t i = 0; i < int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count; i++) {
+                    if (mb_transfer_next_sector(&int13h_service->write_mbt, int13h_service->current_write_block_address, &data_buffer[i * SECTOR_SIZE])) {
+                        LOG("[a=%lu] ", int13h_service->current_write_block_address);
+                        int13h_service->current_write_block_address++;
+                    } else {
+                        LOG("[write error] ");
+                        int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
+                        break;
+
+                    }
+                }
+
+                int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count = 0;
+
+                if (int13h_ctrl->req.rwv_req.status == 0 && int13h_ctrl->req.rwv_req.sectors_count != 0) {
+                    uint8_t sectors_to_write = int13h_ctrl->req.rwv_req.sectors_count;
+                    if (sectors_to_write > BUFFER_SECTORS) sectors_to_write = BUFFER_SECTORS;
+
+                    int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count += sectors_to_write;
+                    int13h_ctrl->req.rwv_req.sectors_count -= sectors_to_write;
+
+                }
+                LOG("[nct=%d,sct=%d]\r\n",
+                        int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                        int13h_ctrl->req.rwv_req.sectors_count);
+            } else {
+                LOG("[nothing to write]\r\n");
+            }
+
             break;
 
         case INT13H_SERVICE_REQUEST_VERIFY:
