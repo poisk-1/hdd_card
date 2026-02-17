@@ -406,7 +406,7 @@ void int13_service_handle_media_present(struct Int13hService *int13h_service, st
                     LOG("[no geomtery/bad chs]\r\n");
                     int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
                 } else {
-                    printf("[a=%lu]\r\n", block_address);
+                    LOG("[a=%lu]\r\n", block_address);
                     int13h_ctrl->req.rwv_req.status = 0;
                 }
             }
