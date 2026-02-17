@@ -177,7 +177,33 @@ int main(int argc, char **argv)
     }
   }
 
-  fwrite(block_buffer, BLOCK_BUFFER_SIZE, 1, stdout);
+  if (fwrite(block_buffer, BLOCK_BUFFER_SIZE, 1, stdout) != 1)
+  {
+    printf("Error: can't write output\r\n");
+    exit(-1);
+  }
+
+  for (size_t i = 1; i < argc; i++)
+  {
+    FILE *file = fopen(argv[i], "r");
+
+    if (file)
+    {
+      while (fread(block_buffer, BLOCK_BUFFER_SIZE, 1, file) == 1)
+      {
+        if (fwrite(block_buffer, BLOCK_BUFFER_SIZE, 1, stdout) != 1)
+        {
+          printf("Error: can't write output\r\n");
+          exit(-1);
+        }
+      }
+    }
+    else
+    {
+      printf("Error: can't open image file %s\r\n", argv[i]);
+      exit(-1);
+    }
+  }
 
   free(block_buffer);
 
