@@ -67,7 +67,6 @@ enum DriveTypeFun15h {
 
  struct __attribute__ ((packed)) DriveInfo {
     bool read_only;
-    bool media_changed;
 
     uint8_t drive_type_fun8h;
     uint8_t drive_type_fun15h;
@@ -92,4 +91,6 @@ struct __attribute__ ((packed)) CardInfo {
     struct DriveInfo hard_drives[MAX_NUMBER_HARD_DRIVES];
 };
 
-uint32_t disk_size_bytes(const struct DriveInfo* di);
+bool is_hard_drive(uint8_t drive_number);
+bool has_geometry(const struct DriveInfo* drive_info);
+const struct DriveInfo* find_drive_info(const struct CardInfo* card_info, uint8_t drive_number);

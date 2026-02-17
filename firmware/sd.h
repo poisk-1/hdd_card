@@ -29,7 +29,7 @@ struct SDMediaInfo
 void sd_media_init(struct SDMediaInfo* media_info);
 bool sd_start_read_blocks(uint32_t address);
 bool sd_start_write_blocks(uint32_t address);
-bool sd_read_next_block(uint8_t *buffer);
-bool sd_write_next_block(uint8_t *buffer);
+bool sd_read_next_block(void *buffer);
+bool sd_write_next_block(void *buffer);
 void sd_stop_read_blocks(void);
 void sd_stop_write_blocks(void);

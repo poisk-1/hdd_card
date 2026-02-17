@@ -17,6 +17,7 @@
 #include "drive_info.h"
 #include "spi.h"
 #include "sd.h"
+#include "int13h_service.h"
 
 void init() {
     /**
@@ -83,15 +84,22 @@ void init() {
     INLVLE = 0x0F;
 }
 
-void log_drive_info(const struct DriveInfo* drive_info) {
-    LOG("\tDRIVE TYPE FUN8H: 0x%x\r\n", drive_info->drive_type_fun8h);
-    LOG("\tDRIVE TYPE FUN15H: 0x%x\r\n", drive_info->drive_type_fun15h);
+struct Int13hService int13h_service;
 
-    LOG("\tNUM OF HEADS: %d\r\n", drive_info->number_of_heads);
-    LOG("\tNUM OF CYLINDERS: %d\r\n", drive_info->number_of_cylinders);
-    LOG("\tNUM OF SECTORS: %d\r\n", drive_info->number_of_sectors);
+void wait_no_media_present() {
+    int13_service_wait_no_media_present(&int13h_service);
+}
 
-    LOG("\tOFFSET: %lu\r\n", drive_info->card_offset);
+void handle_no_media_present(struct ServiceCtrlBase *ctrl) {
+    int13_service_handle_no_media_present(&int13h_service, ctrl);
+}
+
+void wait_media_present() {
+    int13_service_wait_media_present(&int13h_service);
+}
+
+void handle_media_present(struct ServiceCtrlBase *ctrl) {
+    int13_service_handle_media_present(&int13h_service, ctrl);
 }
 
 int main(){
@@ -99,37 +107,30 @@ int main(){
     uart_init();
     buffer_init();
     spi_init();
+    int13_service_init(&int13h_service);
 
     LOG("INIT\r\n");
 
-    if (sd_card_detected()) {
-        struct SDMediaInfo media_info;
-
-        sd_media_init(&media_info);
-
-        if (media_info.error == SD_MEDIA_ERROR_NO_ERROR) {
-            LOG("SD MEDIA DETECTED IN %s MODE\r\n", media_info.sd_mode == SD_MODE_NORMAL ? "NORMAL" : "HC");
-        }
-
-        if (sd_start_read_blocks(0) && sd_read_next_block(buffer_get_data())) {
-            struct CardInfo *card_info = (struct CardInfo *)buffer_get_data();
-            if (memcmp(card_info->magic, MAGIC_STR, MAGIC_SIZE) == 0) {
-                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                    LOG("FP%d:\r\n", i);
-                    log_drive_info(&card_info->floppy_drives[i]);
-                }
-
-                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                    LOG("HD%d:\r\n", i);
-                    log_drive_info(&card_info->hard_drives[i]);
-                }
-            }
-        }
-        sd_stop_read_blocks();
-    }
+    struct ServiceCtrlBase *ctrl = (struct ServiceCtrlBase *)buffer_get_ctrl();
     
     while(1) {
-        service_wait_or_handle_ctrl_request((struct ServiceCtrlBase *) buffer_get_ctrl(), wait_no_media_present, handle_no_media_present);
+        if (sd_card_detected() && int13_service_mount_media(&int13h_service)) {
+            while (sd_card_detected()) {
+                service_wait_or_handle_ctrl_request(
+                        ctrl,
+                        wait_media_present,
+                        handle_media_present
+                        );
+            }
+
+            int13_service_unmount_media(&int13h_service);
+        } else {
+            service_wait_or_handle_ctrl_request(
+                    ctrl,
+                    wait_no_media_present,
+                    handle_no_media_present
+                    );
+        }
     }
 
     return 0;

@@ -587,8 +587,7 @@ static uint8_t wait_for_token() {
     return response;
 }
 
-bool sd_read_next_block(uint8_t *buffer) {
-    uint8_t *ptr = buffer;
+bool sd_read_next_block(void *buffer) {
     if (wait_for_token() == SD_TOKEN_START) {
         spi_read_block(buffer, SD_MEDIA_BLOCK_SIZE);
 
@@ -611,7 +610,7 @@ static void wait_busy() {
     } while ((response == 0x00) && (long_timeout != 0));
 }
 
-bool sd_write_next_block(uint8_t *buffer) {
+bool sd_write_next_block(void *buffer) {
     spi_exchange_byte(SD_TOKEN_START_MULTI_BLOCK);
 
     spi_write_block(buffer, SD_MEDIA_BLOCK_SIZE);

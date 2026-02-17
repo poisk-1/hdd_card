@@ -1,23 +1,27 @@
 #include "int13h_service.h"
 
 #include <inttypes.h>
+#include <string.h>
 
-#include "disk_service_check.h"
+#include "drive_info.h"
 #include "log.h"
+#include "multiblock_transfer.h"
+#include "sd.h"
+#include "buffer.h"
 
 
 enum Int13hServiceRequest {
-    INT13H_REQUEST_CHECK = 0x1,
-    INT13H_REQUEST_SCAN = 0x2,
-    INT13H_REQUEST_RESET = 0x3,
-    INT13H_REQUEST_READ = 0x4,
-    INT13H_REQUEST_READ_NEXT = 0x5,
-    INT13H_REQUEST_WRITE = 0x6,
-    INT13H_REQUEST_WRITE_NEXT = 0x7,
-    INT13H_REQUEST_VERIFY = 0x8,
-    INT13H_REQUEST_READ_PARAMS_FUN8H = 0x9,
-    INT13H_REQUEST_READ_PARAMS_FUN15H = 0xa,
-    INT13H_REQUEST_DETECT_MEDIA_CHANGE = 0xb,
+    INT13H_SERVICE_REQUEST_CHECK = 0x1,
+    INT13H_SERVICE_REQUEST_SCAN = 0x2,
+    INT13H_SERVICE_REQUEST_RESET = 0x3,
+    INT13H_SERVICE_REQUEST_READ = 0x4,
+    INT13H_SERVICE_REQUEST_READ_NEXT = 0x5,
+    INT13H_SERVICE_REQUEST_WRITE = 0x6,
+    INT13H_SERVICE_REQUEST_WRITE_NEXT = 0x7,
+    INT13H_SERVICE_REQUEST_VERIFY = 0x8,
+    INT13H_SERVICE_REQUEST_READ_PARAMS_FUN8H = 0x9,
+    INT13H_SERVICE_REQUEST_READ_PARAMS_FUN15H = 0xa,
+    INT13H_SERVICE_REQUEST_DETECT_MEDIA_CHANGE = 0xb,
 };
 
 enum Int13hStatus {
@@ -84,44 +88,387 @@ struct Int13hCtrl {
     union Req req;
 };
 
-void wait_no_media_present() {}
+void int13_service_init(struct Int13hService *int13h_service) {
+    memset(int13h_service, 0, sizeof(struct Int13hService));
 
-void handle_no_media_present(struct ServiceCtrlBase *ctrl) {
+    mb_transfer_init(&int13h_service->read_mbt, sd_stop_read_blocks, sd_start_read_blocks, sd_read_next_block);
+    mb_transfer_init(&int13h_service->write_mbt, sd_stop_write_blocks, sd_start_write_blocks, sd_write_next_block);
+}
+
+void log_drive_info(const struct DriveInfo* drive_info) {
+    LOG("\tDRIVE TYPE FUN8H: 0x%x\r\n", drive_info->drive_type_fun8h);
+    LOG("\tDRIVE TYPE FUN15H: 0x%x\r\n", drive_info->drive_type_fun15h);
+
+    LOG("\tNUM OF HEADS: %d\r\n", drive_info->number_of_heads);
+    LOG("\tNUM OF CYLINDERS: %d\r\n", drive_info->number_of_cylinders);
+    LOG("\tNUM OF SECTORS: %d\r\n", drive_info->number_of_sectors);
+
+    LOG("\tOFFSET: %lu\r\n", drive_info->card_offset);
+}
+
+bool int13_service_mount_media(struct Int13hService *int13h_service) {
+    struct SDMediaInfo media_info;
+
+    sd_media_init(&media_info);
+
+    if (media_info.error == SD_MEDIA_ERROR_NO_ERROR) {
+        LOG("SD MEDIA DETECTED IN %s MODE\r\n", media_info.sd_mode == SD_MODE_NORMAL ? "NORMAL" : "HC");
+
+        if (sd_start_read_blocks(0) && sd_read_next_block(buffer_get_data())) {
+            struct CardInfo *card_info = (struct CardInfo *)buffer_get_data();
+            if (memcmp(card_info->magic, MAGIC_STR, MAGIC_SIZE) == 0) {
+                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                    if (has_geometry(&card_info->floppy_drives[i])) {
+                        LOG("MOUNTED FP%d:\r\n", i);
+                        log_drive_info(&card_info->floppy_drives[i]);
+                    }
+                }
+
+                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                    if (has_geometry(&card_info->hard_drives[i])) {
+                        LOG("MOUNTED HD%d:\r\n", i);
+                        log_drive_info(&card_info->hard_drives[i]);
+                    }
+                }
+
+                memcpy(&int13h_service->card_info, card_info, sizeof(struct CardInfo));
+            }
+            else {
+                LOG("MAGIC NOT FOUND");
+                return false;
+            }
+        }
+        sd_stop_read_blocks();
+
+        for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+            int13h_service->media_changed[i] = true;
+        }
+
+        return true;
+    }
+    else {
+        LOG("SD MEDIA INIT FAILED");
+    }
+
+    return false;
+}
+
+void int13_service_unmount_media(struct Int13hService *int13h_service) {
+    mb_transfer_abort(&int13h_service->read_mbt);
+    mb_transfer_abort(&int13h_service->write_mbt);    
+
+    LOG("UNMOUNTED\r\n");
+}
+
+void int13_service_wait_media_present(struct Int13hService *int13h_service) {
+    mb_transfer_stop_if_expired(&int13h_service->read_mbt);
+    mb_transfer_stop_if_expired(&int13h_service->write_mbt);
+}
+
+#define HIGH_CYLINDER_BITS 2
+#define HIGH_CYLINDER_NUMBER_MASK ((uint8_t)0xc0)
+#define SECTOR_NUMBER_MASK ((uint8_t)~HIGH_CYLINDER_NUMBER_MASK)
+
+static bool chs_to_block_address(const struct DriveInfo* drive_info, const struct RWVReq* disk_req, uint32_t *block_address) {
+    uint32_t cylinder_number =
+            (uint32_t) disk_req->low_cylinder_number |
+            (((uint32_t) disk_req->sector_and_high_cylinder_numbers & HIGH_CYLINDER_NUMBER_MASK) << HIGH_CYLINDER_BITS);
+
+    uint32_t sector_number =
+            (uint32_t) disk_req->sector_and_high_cylinder_numbers & SECTOR_NUMBER_MASK;
+
+    if (cylinder_number < drive_info->number_of_cylinders &&
+            disk_req->head_number < drive_info->number_of_heads &&
+            sector_number <= drive_info->number_of_sectors) {
+        *block_address = drive_info->card_offset + ((uint32_t) cylinder_number * drive_info->number_of_heads +
+                (uint32_t) disk_req->head_number) * drive_info->number_of_sectors +
+                ((uint32_t) sector_number - 1);
+
+        return true;
+    }
+
+    return false;
+}
+
+static void invert_buffer(uint8_t *buffer, size_t size) {
+    for (size_t i = 0; i < size; i++) {
+        buffer[i] = ~buffer[i];
+    }
+}
+
+static void set_params_fun8h(const struct DriveInfo* drive_info, struct ReadParamsFun8hReq* req) {
+    req->success = 1;
+    req->drive_type = drive_info->drive_type_fun8h;
+    req->max_low_cylinder_number = (uint8_t) ((drive_info->number_of_cylinders - 1) & 0xff);
+    req->max_head_number = (uint8_t) drive_info->number_of_heads - 1;
+    req->max_sector_and_high_cylinder_numbers =
+            (uint8_t) (drive_info->number_of_sectors & SECTOR_NUMBER_MASK) |
+            (uint8_t) (((drive_info->number_of_cylinders - 1) >> HIGH_CYLINDER_BITS) & HIGH_CYLINDER_NUMBER_MASK);
+}
+
+void int13_service_handle_media_present(struct Int13hService *int13h_service, struct ServiceCtrlBase *ctrl) {
+    struct Int13hCtrl *int13h_ctrl = (struct Int13hCtrl *) ctrl;
+    uint8_t *data_buffer = buffer_get_data();
+
+    const struct DriveInfo* drive_info = NULL;
+
+    if (ctrl->request != INT13H_SERVICE_REQUEST_READ &&
+            ctrl->request != INT13H_SERVICE_REQUEST_READ_NEXT) {
+        mb_transfer_stop(&int13h_service->read_mbt);
+    }
+
+    if (ctrl->request != INT13H_SERVICE_REQUEST_WRITE &&
+            ctrl->request != INT13H_SERVICE_REQUEST_WRITE_NEXT) {
+        mb_transfer_stop(&int13h_service->write_mbt);
+    }
+
+    switch ((enum Int13hServiceRequest)int13h_ctrl->base.request) {
+        case INT13H_SERVICE_REQUEST_CHECK:
+            LOG("CHECK\r\n");
+
+            invert_buffer(buffer_get_data(), DATA_BUFFER_SIZE);
+            break;
+
+        case INT13H_SERVICE_REQUEST_SCAN:
+            int13h_ctrl->req.scan_req.number_of_floppy_drives = 0;
+            int13h_ctrl->req.scan_req.number_of_hard_drives = 0;
+
+            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                if (has_geometry(&int13h_service->card_info.floppy_drives[i])) {
+                    int13h_ctrl->req.scan_req.number_of_floppy_drives++;
+                }
+            }
+
+            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                if (has_geometry(&int13h_service->card_info.hard_drives[i])) {
+                    int13h_ctrl->req.scan_req.number_of_hard_drives++;
+                }
+            }
+
+            LOG("SCAN [%d FPS, %d HDS]\r\n", int13h_ctrl->req.scan_req.number_of_floppy_drives, int13h_ctrl->req.scan_req.number_of_hard_drives);
+            break;
+
+        case INT13H_SERVICE_REQUEST_RESET:
+            LOG("RESET [d=%d]\r\n", int13h_ctrl->req.rwv_req.drive_number);
+            int13h_ctrl->req.rwv_req.status = 0;
+            break;
+
+        case INT13H_SERVICE_REQUEST_READ:
+            drive_info = find_drive_info(&int13h_service->card_info, int13h_ctrl->req.rwv_req.drive_number);
+
+            LOG(
+                    "READ [d=%d,lc=%d,h=%d,shc=%d,sct=%d] ",
+                    int13h_ctrl->req.rwv_req.drive_number,
+                    int13h_ctrl->req.rwv_req.low_cylinder_number,
+                    int13h_ctrl->req.rwv_req.head_number,
+                    int13h_ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                    int13h_ctrl->req.rwv_req.sectors_count
+                    );
+
+            if (!(drive_info != NULL && has_geometry(drive_info) && chs_to_block_address(drive_info, &int13h_ctrl->req.rwv_req, &int13h_service->current_read_block_address))) {
+                LOG("[no geometry/bad chs]\r\n");
+                int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
+                break;
+            }
+
+        case INT13H_SERVICE_REQUEST_READ_NEXT:
+            if (int13h_ctrl->base.request == INT13H_SERVICE_REQUEST_READ_NEXT) {
+                LOG("READ_NEXT [lct=%d,sct=%d] ",
+                        int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                        int13h_ctrl->req.rwv_req.sectors_count);
+            }
+
+            int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count = 0;
+            int13h_ctrl->req.rwv_req.status = 0;
+
+            if (int13h_ctrl->req.rwv_req.sectors_count != 0) {
+                uint8_t sectors_to_read = int13h_ctrl->req.rwv_req.sectors_count;
+                if (sectors_to_read > BUFFER_SECTORS) sectors_to_read = BUFFER_SECTORS;
+
+                for (uint8_t i = 0; i < sectors_to_read; i++) {
+                    if (mb_transfer_next_sector(&int13h_service->read_mbt, int13h_service->current_read_block_address, &data_buffer[i * SECTOR_SIZE])) {
+                        int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count++;
+                        int13h_ctrl->req.rwv_req.sectors_count--;
+
+                        LOG("[a=%lu] ", int13h_service->current_read_block_address);
+                        int13h_service->current_read_block_address++;
+                    } else {
+                        LOG("[read error] ");
+                        int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
+                        break;
+                    }
+                }
+                LOG("[lct=%d,sct=%d]\r\n",
+                        int13h_ctrl->req.rwv_req.sectors_last_r_next_w_count,
+                        int13h_ctrl->req.rwv_req.sectors_count);
+
+            } else {
+                LOG("[nothing to read]\r\n");
+            }
+
+            break;
+
+
+        case INT13H_SERVICE_REQUEST_WRITE:
+        case INT13H_SERVICE_REQUEST_WRITE_NEXT:
+            LOG("WRITE [no media]\r\n");
+            int13h_ctrl->req.rwv_req.status = INT13H_STATUS_CONTROLLER_FAILED;
+            break;
+
+        case INT13H_SERVICE_REQUEST_VERIFY:
+            {
+                uint32_t block_address = 0;
+                drive_info = find_drive_info(&int13h_service->card_info, int13h_ctrl->req.rwv_req.drive_number);
+                LOG(
+                        "VERIFY [d=%d,lc=%d,h=%d,shc=%d,sct=%d] ",
+                        int13h_ctrl->req.rwv_req.drive_number,
+                        int13h_ctrl->req.rwv_req.low_cylinder_number,
+                        int13h_ctrl->req.rwv_req.head_number,
+                        int13h_ctrl->req.rwv_req.sector_and_high_cylinder_numbers,
+                        int13h_ctrl->req.rwv_req.sectors_count
+                        );
+
+                if (!(drive_info != NULL && has_geometry(drive_info) && chs_to_block_address(drive_info, &int13h_ctrl->req.rwv_req, &block_address))) {
+                    LOG("[no geomtery/bad chs]\r\n");
+                    int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
+                } else {
+                    printf("[a=%lu]\r\n", block_address);
+                    int13h_ctrl->req.rwv_req.status = 0;
+                }
+            }
+
+            break;
+        case INT13H_SERVICE_REQUEST_READ_PARAMS_FUN8H:
+            int13h_ctrl->req.read_params_fun8h_req.number_of_drives = 0;
+
+            if (is_hard_drive(int13h_ctrl->req.read_params_fun8h_req.drive_number)) {
+                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
+                    if (has_geometry(&int13h_service->card_info.hard_drives[i])) {
+                        int13h_ctrl->req.read_params_fun8h_req.number_of_drives++;
+                    }
+                }
+            } else {
+                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
+                    if (has_geometry(&int13h_service->card_info.floppy_drives[i])) {
+                        int13h_ctrl->req.read_params_fun8h_req.number_of_drives++;
+                    }
+                }
+            }
+
+            drive_info = find_drive_info(&int13h_service->card_info, int13h_ctrl->req.read_params_fun8h_req.drive_number);
+
+            LOG(
+                    "READ_PARAMS_FUN8H [d=%d] ",
+                    int13h_ctrl->req.read_params_fun8h_req.drive_number
+                    );
+
+            if (drive_info != NULL && has_geometry(drive_info)) {
+                set_params_fun8h(drive_info, &int13h_ctrl->req.read_params_fun8h_req);
+                LOG(
+                        "[mlc=%d,mh=%d,mshc=%d]\r\n",
+                        int13h_ctrl->req.read_params_fun8h_req.max_low_cylinder_number,
+                        int13h_ctrl->req.read_params_fun8h_req.max_head_number,
+                        int13h_ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers
+                        );
+            } else {
+                LOG("[no geometry]\r\n");
+                int13h_ctrl->req.read_params_fun8h_req.success = 0;
+                int13h_ctrl->req.read_params_fun8h_req.drive_type = 0;
+                int13h_ctrl->req.read_params_fun8h_req.max_low_cylinder_number = 0;
+                int13h_ctrl->req.read_params_fun8h_req.max_head_number = 0;
+                int13h_ctrl->req.read_params_fun8h_req.max_sector_and_high_cylinder_numbers = 0;
+            }
+
+            break;
+
+        case INT13H_SERVICE_REQUEST_READ_PARAMS_FUN15H:
+            drive_info = find_drive_info(&int13h_service->card_info, int13h_ctrl->req.read_params_fun8h_req.drive_number);
+            LOG(
+                    "READ_PARAMS_FUN15H [d=%d] ",
+                    int13h_ctrl->req.read_params_fun15h_req.drive_number
+                    );
+
+            if (drive_info != NULL && has_geometry(drive_info)) {
+                LOG("[t=%d]\r\n", drive_info->drive_type_fun15h);
+                int13h_ctrl->req.read_params_fun15h_req.success = 1;
+                int13h_ctrl->req.read_params_fun15h_req.drive_type = drive_info->drive_type_fun15h;
+            } else {
+                LOG("[no geometry]\r\n");
+                int13h_ctrl->req.read_params_fun15h_req.success = 0;
+                int13h_ctrl->req.read_params_fun15h_req.drive_type = 0;
+            }
+
+            break;
+
+        case INT13H_SERVICE_REQUEST_DETECT_MEDIA_CHANGE:
+            LOG(
+                    "DETECT_MEDIA_CHANGE [d=%d] ",
+                    int13h_ctrl->req.detect_media_change.drive_number
+                    );
+
+            if (!is_hard_drive(int13h_ctrl->req.read_params_fun8h_req.drive_number) && int13h_ctrl->req.read_params_fun8h_req.drive_number < MAX_NUMBER_FLOPPY_DRIVES) {
+                if (int13h_service->media_changed[int13h_ctrl->req.read_params_fun8h_req.drive_number]) {
+                    int13h_service->media_changed[int13h_ctrl->req.read_params_fun8h_req.drive_number] = false;
+                    LOG("[media changed]\r\n");
+                    int13h_ctrl->req.detect_media_change.status = INT13H_STATUS_DISK_CHANGED;
+                } else {
+                    LOG("[media not changed]\r\n");
+                    int13h_ctrl->req.detect_media_change.status = 0;
+                }
+            }
+            else {
+                LOG("[fixed media]\r\n");
+                int13h_ctrl->req.rwv_req.status = INT13H_STATUS_BAD_SECTOR;
+            }
+
+            break;
+
+        default:
+            LOG("UNKNOWN REQUEST %d [no media]\r\n", ctrl->request);
+            break;
+    }
+}
+
+void int13_service_wait_no_media_present(struct Int13hService *int13h_service) {}
+
+void int13_service_handle_no_media_present(struct Int13hService *int13h_service, struct ServiceCtrlBase *ctrl) {
     struct Int13hCtrl *int13h_ctrl = (struct Int13hCtrl *) ctrl;
 
     switch ((enum Int13hServiceRequest)int13h_ctrl->base.request) {
-        case INT13H_REQUEST_CHECK:
-            check();
+        case INT13H_SERVICE_REQUEST_CHECK:
+            LOG("CHECK\r\n");
+
+            invert_buffer(buffer_get_data(), DATA_BUFFER_SIZE);
             break;
 
-        case INT13H_REQUEST_SCAN:
+        case INT13H_SERVICE_REQUEST_SCAN:
             LOG("SCAN [no media]\r\n");
             int13h_ctrl->req.scan_req.number_of_floppy_drives = 0;
             int13h_ctrl->req.scan_req.number_of_hard_drives = 0;
             break;
 
-        case INT13H_REQUEST_RESET:
-        case INT13H_REQUEST_READ:
-        case INT13H_REQUEST_READ_NEXT:
-        case INT13H_REQUEST_WRITE:
-        case INT13H_REQUEST_WRITE_NEXT:
-        case INT13H_REQUEST_VERIFY:
+        case INT13H_SERVICE_REQUEST_RESET:
+        case INT13H_SERVICE_REQUEST_READ:
+        case INT13H_SERVICE_REQUEST_READ_NEXT:
+        case INT13H_SERVICE_REQUEST_WRITE:
+        case INT13H_SERVICE_REQUEST_WRITE_NEXT:
+        case INT13H_SERVICE_REQUEST_VERIFY:
             LOG("RESET/READ/WRITE/VERIFY [no media]\r\n");
             int13h_ctrl->req.rwv_req.status = INT13H_STATUS_CONTROLLER_FAILED;
             break;
 
-        case INT13H_REQUEST_READ_PARAMS_FUN8H:
+        case INT13H_SERVICE_REQUEST_READ_PARAMS_FUN8H:
             LOG("READ_PARAMS_FUN8H [no media]\r\n");
             int13h_ctrl->req.read_params_fun8h_req.number_of_drives = 0;
             int13h_ctrl->req.read_params_fun8h_req.success = 0;
             break;
 
-        case INT13H_REQUEST_READ_PARAMS_FUN15H:
+        case INT13H_SERVICE_REQUEST_READ_PARAMS_FUN15H:
             LOG("READ_PARAMS_FUN15H [no media]\r\n");
             int13h_ctrl->req.read_params_fun15h_req.success = 0;
             break;
 
-        case INT13H_REQUEST_DETECT_MEDIA_CHANGE:
+        case INT13H_SERVICE_REQUEST_DETECT_MEDIA_CHANGE:
             LOG("DETECT_MEDIA_CHANGE [no media]\r\n");
             int13h_ctrl->req.detect_media_change.status = INT13H_STATUS_CONTROLLER_FAILED;
             break;
