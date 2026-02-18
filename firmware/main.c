@@ -13,8 +13,6 @@
 #include "buffer.h"
 #include "service.h"
 #include "log.h"
-#include "int13h_service.h"
-#include "drive_info.h"
 #include "spi.h"
 #include "sd.h"
 #include "int13h_service.h"
