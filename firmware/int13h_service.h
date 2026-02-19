@@ -5,7 +5,7 @@
 #include "multiblock_transfer.h"
 
 struct Int13hService {
-    struct ImageInfo image_info;
+    struct ImageInfo ii;
     
     uint32_t current_read_block_address;
     struct MultiblockTransfer read_mbt;
