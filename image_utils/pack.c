@@ -36,13 +36,6 @@ static size_t next_hard(size_t *hard_index)
   return current_hard_index;
 }
 
-static uint32_t size_blocks(struct DiskInfo* di)
-{
-  return di->number_of_cylinders *
-                  di->number_of_heads *
-                  di->number_of_sectors;
-}
-
 static uint32_t next_image_offset(uint32_t *image_offset, struct DiskInfo* di)
 {
   uint32_t current_image_offset = *image_offset;

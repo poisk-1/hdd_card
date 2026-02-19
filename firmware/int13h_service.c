@@ -91,10 +91,6 @@ static bool is_hard_drive(uint8_t drive_number) {
     return drive_number & 0x80;
 }
 
-static bool has_geometry(const struct DiskInfo* di) {
-    return di->number_of_cylinders != 0;
-}
-
 static const struct DiskInfo* find_disk_info(const struct ImageInfo* ii, uint8_t drive_number) {
     const struct DiskInfo* disk_info = NULL;
     size_t i = drive_number & 0xf;

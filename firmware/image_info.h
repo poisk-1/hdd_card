@@ -72,3 +72,6 @@ struct __attribute__ ((packed)) ImageInfo {
     struct DiskInfo floppy_dis[MAX_NUMBER_FLOPPY_DRIVES];
     struct DiskInfo hard_dis[MAX_NUMBER_HARD_DRIVES];
 };
+
+uint32_t size_blocks(struct DiskInfo* di);
+bool has_geometry(const struct DiskInfo* di);
