@@ -53,13 +53,13 @@ uint8_t uart_read(void)
     return U1RXB;
 }
 
-void uart_write(uint8_t txData)
+void uart_write(uint8_t data)
 {
     while(0 == PIR4bits.U1TXIF)
     {
     }
 
-    U1TXB = txData;    // Write the data byte to the USART.
+    U1TXB = data;
 }
 
 int getch(void)
@@ -67,7 +67,7 @@ int getch(void)
     return uart_read();
 }
 
-void putch(char txData)
+void putch(char data)
 {
-    uart_write(txData);
+    uart_write(data);
 }

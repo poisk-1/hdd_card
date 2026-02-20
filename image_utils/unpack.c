@@ -10,42 +10,47 @@
 
 #define error(...) do { fprintf(stderr, __VA_ARGS__); exit(-1); } while(0)
 
-static void print_drive_info(const struct DiskInfo* di) {
-    printf("\tDRIVE TYPE FUN8H: 0x%x\r\n", di->drive_type_fun8h);
-    printf("\tDRIVE TYPE FUN15H: 0x%x\r\n", di->drive_type_fun15h);
+static void write_image_file(char* filename, uint8_t *block_buffer, bool header_only, struct DiskInfo* di) {
+  uint32_t size = size_blocks(di);
+  printf("Found %d blocks at offset %d", size, di->image_offset);
 
-    printf("\tNUM OF HEADS: %d\r\n", di->number_of_heads);
-    printf("\tNUM OF CYLINDERS: %d\r\n", di->number_of_cylinders);
-    printf("\tNUM OF SECTORS: %d\r\n", di->number_of_sectors);
+  if (!header_only) {
+    printf(": writing to %s", filename);
+    FILE *file = fopen(filename, "w");
 
-    printf("\tIMAGE OFFSET: %u\r\n", di->image_offset);
-}
+    if (file)
+    {
+      for (size_t i = 0; i < size; i++) {
+        if (fread(block_buffer, BLOCK_BUFFER_SIZE, 1, stdin) != 1)
+        {
+          error("Error: unexpected EOF\r\n");
+        }
 
-static void write_image_file(char* filename, uint8_t *block_buffer, uint32_t size) {
-  FILE *file = fopen(filename, "w");
-
-  if (file)
-  {
-    for (size_t i = 0; i < size; i++) {
-      if (fread(block_buffer, BLOCK_BUFFER_SIZE, 1, stdin) != 1)
-      {
-        error("Error: unexpected EOF\r\n");
-      }
-
-      if (fwrite(block_buffer, BLOCK_BUFFER_SIZE, 1, file) != 1)
-      {
-        error("Error: can't write output\r\n");
+        if (fwrite(block_buffer, BLOCK_BUFFER_SIZE, 1, file) != 1)
+        {
+          error("Error: can't write output\r\n");
+        }
       }
     }
+    else
+    {
+      error("Error: can't open image file %s\r\n", filename);
+    }
   }
-  else
-  {
-    error("Error: can't open image file %s\r\n", filename);
-  }
+  printf("\r\n");
 }
 
 int main(int argc, char **argv)
 {
+  bool header_only = false;
+  if (argc > 1) {
+    if (strcmp(argv[1], "--header-only") == 0) {
+      header_only = true;
+    }
+    else {
+      error("Usage: unpack [--header-only]\r\n");
+    }
+  }
   struct ImageInfo ii;
   uint8_t *block_buffer = malloc(BLOCK_BUFFER_SIZE);
 
@@ -63,19 +68,15 @@ int main(int argc, char **argv)
 
   for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
       if (has_geometry(&ii.floppy_dis[i])) {
-          uint32_t size = size_blocks(&ii.floppy_dis[i]);
           sprintf(filename, "floppy%ld.img", i);
-          printf("Writing %d blocks to %s\r\n", size, filename);
-          write_image_file(filename, block_buffer, size);
+          write_image_file(filename, block_buffer, header_only, &ii.floppy_dis[i]);
       }
   }
 
   for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
       if (has_geometry(&ii.hard_dis[i])) {
-          uint32_t size = size_blocks(&ii.hard_dis[i]);
           sprintf(filename, "hard%ld.img", i);
-          printf("Writing %d blocks to %s\r\n", size, filename);
-          write_image_file(filename, block_buffer, size);
+          write_image_file(filename, block_buffer, header_only, &ii.hard_dis[i]);
       }
   }
 
