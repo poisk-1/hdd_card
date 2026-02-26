@@ -10,32 +10,6 @@
 
 #define error(...) do { fprintf(stderr, __VA_ARGS__); exit(-1); } while(0)
 
-static size_t next_floppy(size_t *floppy_index)
-{
-  size_t current_floppy_index = *floppy_index;
-  (*floppy_index)++;
-
-  if (current_floppy_index == MAX_NUMBER_FLOPPY_DRIVES)
-  {
-    error("Error: can't have more than %d floppy drives\r\n", MAX_NUMBER_FLOPPY_DRIVES);
-  }
-
-  return current_floppy_index;
-}
-
-static size_t next_hard(size_t *hard_index)
-{
-  size_t current_hard_index = *hard_index;
-  (*hard_index)++;
-
-  if (current_hard_index == MAX_NUMBER_HARD_DRIVES)
-  {
-    error("Error: can't have more than %d hard drives\r\n", MAX_NUMBER_HARD_DRIVES);
-  }
-
-  return current_hard_index;
-}
-
 static uint32_t next_image_offset(uint32_t *image_offset, struct DiskInfo* di)
 {
   uint32_t current_image_offset = *image_offset;
@@ -76,17 +50,21 @@ const struct FloppyFormat* find_floppy_format(uint32_t size_bytes) {
   return NULL;
 }
 
+void usage(void) {
+  error("Usage: pack <DISK INFO> [<DISK INFO> ...]\r\n"
+    "\tExisting image file:                    <DISK INFO> ::= [--read-only] <FILENAME>\r\n"
+    "\tEmpty floppy disk:                      <DISK INFO> ::= --floppy-<KILOBYTES>k\r\n"
+    "\tEmpty hard disk (16 heads, 63 sectors): <DISK INFO> ::= --hard-<CYLINDERS>c\r\n"
+    "\tSupported floppy disk sizes:            <KILOBYTES> ::= 1440 | 1200 | 720 | 360\r\n"
+    "\tSupported hard disk cylinders:          0 < <CYLINDERS> <= 1024\r\n"
+  );
+}
+
 int main(int argc, char **argv)
 {
   if (argc < 2)
   {
-    error("Usage: pack <DISK INFO> [<DISK INFO> ...]\r\n"
-      "\tExisting image file:                    <DISK INFO> ::= [--read-only] <FILENAME>\r\n"
-      "\tEmpty floppy disk:                      <DISK INFO> ::= --floppy-<KILOBYTES>k\r\n"
-      "\tEmpty hard disk (16 heads, 63 sectors): <DISK INFO> ::= --hard-<CYLINDERS>c\r\n"
-      "\tSupported floppy disk sizes:            <KILOBYTES> ::= 1440 | 1200 | 720 | 360\r\n"
-      "\tSupported hard disk cylinders:          0 < <CYLINDERS> <= 1024\r\n"
-    );
+    usage();
   }
 
   struct ImageInfo ii;
@@ -98,15 +76,15 @@ int main(int argc, char **argv)
   bool current_read_only = false;
   uint32_t current_image_offset = 1; // First block contains card info
 
-  char* floppy_filenames[MAX_NUMBER_FLOPPY_DRIVES];
-  char* hard_filenames[MAX_NUMBER_HARD_DRIVES];
+  char* image_filenames[MAX_NUMBER_DISKS];
+  memset(image_filenames, 0, sizeof(char*) * (MAX_NUMBER_DISKS));
 
-  memset(floppy_filenames, 0, sizeof(char*) * MAX_NUMBER_FLOPPY_DRIVES);
-  memset(hard_filenames, 0, sizeof(char*) * MAX_NUMBER_HARD_DRIVES);
-
+  size_t disk_index = 0;
+  size_t image_index = 0;
   for (size_t i = 1; i < argc; i++)
   {
     struct stat st;
+    uint8_t drive_index;
     uint16_t number_of_cylinders;
     uint32_t floppy_size_kibytes;
 
@@ -114,74 +92,111 @@ int main(int argc, char **argv)
       current_read_only = true;
     }
     else {
-      if (sscanf(argv[i], "--floppy-%dk", &floppy_size_kibytes) == 1) {
+      if (disk_index >= MAX_NUMBER_DISKS) {
+        error("Error: can't have more than %d disks\r\n", MAX_NUMBER_DISKS);
+      }
+
+      if (sscanf(argv[i], "--floppy%hhd-%dk", &drive_index, &floppy_size_kibytes) == 2) {
+        if (drive_index >= MAX_NUMBER_FLOPPY_DRIVES) {
+          error("Error: can't have more than %d floppy drives\r\n", MAX_NUMBER_FLOPPY_DRIVES);
+        }
+
         const struct FloppyFormat* floppy_format = find_floppy_format(floppy_size_kibytes * 1024);
         if (floppy_format != NULL) {
-          size_t j = next_floppy(&current_floppy_index);
-          ii.floppy_dis[j].read_only = false;
-          ii.floppy_dis[j].drive_type_fun8h = floppy_format->drive_type_fun8h;
-          ii.floppy_dis[j].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-          ii.floppy_dis[j].number_of_heads = floppy_format->number_of_heads;
-          ii.floppy_dis[j].number_of_sectors = floppy_format->number_of_sectors;
-          ii.floppy_dis[j].number_of_cylinders = floppy_format->number_of_cylinders;
-          ii.floppy_dis[j].image_offset = next_image_offset(&current_image_offset, &ii.floppy_dis[j]);
+          ii.dis[disk_index].read_only = false;
+          ii.dis[disk_index].drive_number = drive_index;
+          ii.dis[disk_index].drive_type_fun8h = floppy_format->drive_type_fun8h;
+          ii.dis[disk_index].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+          ii.dis[disk_index].number_of_heads = floppy_format->number_of_heads;
+          ii.dis[disk_index].number_of_sectors = floppy_format->number_of_sectors;
+          ii.dis[disk_index].number_of_cylinders = floppy_format->number_of_cylinders;
+          ii.dis[disk_index].image_offset = next_image_offset(&current_image_offset, &ii.dis[disk_index]);
+          disk_index++;
         }
         else {
           error("Error: unexpected floppy size %d KiB in --floppy-NNNNk\r\n", floppy_size_kibytes);
         }
       }
-      else if (sscanf(argv[i], "--hard-%hdc", &number_of_cylinders) == 1) {
+      else if (sscanf(argv[i], "--hard%hhd-%hdc", &drive_index, &number_of_cylinders) == 2) {
+        if (drive_index >= MAX_NUMBER_HARD_DRIVES) {
+          error("Error: can't have more than %d hard drives\r\n", MAX_NUMBER_HARD_DRIVES);
+        }
+
         if (number_of_cylinders > 0 && number_of_cylinders <= MAX_HARD_NUMBER_OF_CYLINDERS) {
-          size_t j = next_hard(&current_hard_index);
-          ii.hard_dis[j].read_only = false;
-          ii.hard_dis[j].drive_type_fun8h = 0;
-          ii.hard_dis[j].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
-          ii.hard_dis[j].number_of_heads = HARD_NUMBER_OF_HEADS;
-          ii.hard_dis[j].number_of_sectors = HARD_NUMBER_OF_SECTORS;
-          ii.hard_dis[j].number_of_cylinders = number_of_cylinders;
-          ii.hard_dis[j].image_offset = next_image_offset(&current_image_offset, &ii.hard_dis[j]);
+          ii.dis[disk_index].read_only = false;
+          ii.dis[disk_index].drive_number = HARD_DRIVE_NUMBER_BASE | drive_index;
+          ii.dis[disk_index].drive_type_fun8h = 0;
+          ii.dis[disk_index].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
+          ii.dis[disk_index].number_of_heads = HARD_NUMBER_OF_HEADS;
+          ii.dis[disk_index].number_of_sectors = HARD_NUMBER_OF_SECTORS;
+          ii.dis[disk_index].number_of_cylinders = number_of_cylinders;
+          ii.dis[disk_index].image_offset = next_image_offset(&current_image_offset, &ii.dis[disk_index]);
+          disk_index++;
         }
         else {
           error("Error: invalid number of cylinders in --hard-NNNNc: 0 < %hd <= %hd\r\n", number_of_cylinders, MAX_HARD_NUMBER_OF_CYLINDERS);
         }
       }
-      else if (stat(argv[i], &st) == 0)
+      else if (sscanf(argv[i], "--floppy%hhd-image", &drive_index) == 1 && i + 1 < argc)
       {
-        const struct FloppyFormat* floppy_format = find_floppy_format(st.st_size);
-        if (floppy_format != NULL) {
-          size_t j = next_floppy(&current_floppy_index);
-          floppy_filenames[j] = argv[i];
-          ii.floppy_dis[j].read_only = current_read_only;
-          ii.floppy_dis[j].drive_type_fun8h = floppy_format->drive_type_fun8h;
-          ii.floppy_dis[j].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
-          ii.floppy_dis[j].number_of_heads = floppy_format->number_of_heads;
-          ii.floppy_dis[j].number_of_sectors = floppy_format->number_of_sectors;
-          ii.floppy_dis[j].number_of_cylinders = floppy_format->number_of_cylinders;
-          ii.floppy_dis[j].image_offset = next_image_offset(&current_image_offset, &ii.floppy_dis[j]);
+        char* filename = argv[++i];
+
+        if (stat(filename, &st) == 0) {
+          const struct FloppyFormat* floppy_format = find_floppy_format(st.st_size);
+          if (floppy_format != NULL) {
+            image_filenames[image_index++] = filename;
+
+            ii.dis[disk_index].read_only = current_read_only;
+            ii.dis[disk_index].drive_number = drive_index;
+            ii.dis[disk_index].drive_type_fun8h = floppy_format->drive_type_fun8h;
+            ii.dis[disk_index].drive_type_fun15h = FUN15H_DRIVE_TYPE_FLOPPY_DISK;
+            ii.dis[disk_index].number_of_heads = floppy_format->number_of_heads;
+            ii.dis[disk_index].number_of_sectors = floppy_format->number_of_sectors;
+            ii.dis[disk_index].number_of_cylinders = floppy_format->number_of_cylinders;
+            ii.dis[disk_index].image_offset = next_image_offset(&current_image_offset, &ii.dis[disk_index]);
+            disk_index++;
+          }
+          else {
+            error("Error: unexpected floppy image file size %ld Bytes\r\n", st.st_size);
+          }
         }
-        else if (
-              st.st_size > HARD_CYLINDER_SIZE_BYTES &&
-              st.st_size % HARD_CYLINDER_SIZE_BYTES == 0 &&
-              st.st_size <= HARD_CYLINDER_SIZE_BYTES * MAX_HARD_NUMBER_OF_CYLINDERS)
-        {
-          size_t j = next_hard(&current_hard_index);
-          hard_filenames[j] = argv[i];
-          ii.hard_dis[j].read_only = current_read_only;
-          ii.hard_dis[j].drive_type_fun8h = 0;
-          ii.hard_dis[j].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
-          ii.hard_dis[j].number_of_heads = HARD_NUMBER_OF_HEADS;
-          ii.hard_dis[j].number_of_sectors = HARD_NUMBER_OF_SECTORS;
-          ii.hard_dis[j].number_of_cylinders = st.st_size / HARD_CYLINDER_SIZE_BYTES;
-          ii.hard_dis[j].image_offset = next_image_offset(&current_image_offset, &ii.hard_dis[j]);
+        else {
+          error("Error: can't open floppy image file %s\r\n", argv[i + 1]);
+        }
+      }
+      else if (sscanf(argv[i], "--hard%hhd-image", &drive_index) == 1 && i + 1 < argc) {
+        char* filename = argv[++i];
+
+        if (stat(filename, &st) == 0) {
+          if (
+                st.st_size > HARD_CYLINDER_SIZE_BYTES &&
+                st.st_size % HARD_CYLINDER_SIZE_BYTES == 0 &&
+                st.st_size <= HARD_CYLINDER_SIZE_BYTES * MAX_HARD_NUMBER_OF_CYLINDERS)
+          {
+            image_filenames[image_index++] = filename;
+
+            ii.dis[disk_index].read_only = current_read_only;
+            ii.dis[disk_index].drive_number = HARD_DRIVE_NUMBER_BASE | drive_index;
+            ii.dis[disk_index].drive_type_fun8h = 0;
+            ii.dis[disk_index].drive_type_fun15h = FUN15H_DRIVE_TYPE_HARD_DISK;
+            ii.dis[disk_index].number_of_heads = HARD_NUMBER_OF_HEADS;
+            ii.dis[disk_index].number_of_sectors = HARD_NUMBER_OF_SECTORS;
+            ii.dis[disk_index].number_of_cylinders = st.st_size / HARD_CYLINDER_SIZE_BYTES;
+            ii.dis[disk_index].image_offset = next_image_offset(&current_image_offset, &ii.dis[disk_index]);
+            disk_index++;
+          }
+          else
+          {
+            error("Error: unexpected hard image file size %ld Bytes\r\n", st.st_size);
+          }
         }
         else
         {
-          error("Error: unexpected image file size %ld Bytes\r\n", st.st_size);
+          error("Error: can't open hard image file %s\r\n", argv[i + 1]);
         }
       }
-      else
-      {
-        error("Error: can't open image file %s\r\n", argv[i]);
+      else {
+        error("Error: invalid arguments\r\n");
       }
 
       current_read_only = false;
@@ -197,10 +212,11 @@ int main(int argc, char **argv)
     error("Error: can't write output\r\n");
   }
 
-  for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES + MAX_NUMBER_HARD_DRIVES; i++) {
-    struct DiskInfo* di = (i < MAX_NUMBER_FLOPPY_DRIVES) ? &ii.floppy_dis[i] : &ii.hard_dis[i - MAX_NUMBER_FLOPPY_DRIVES];
-    if (di->image_offset != 0) {
-      char* filename = (i < MAX_NUMBER_FLOPPY_DRIVES) ? floppy_filenames[i] : hard_filenames[i - MAX_NUMBER_FLOPPY_DRIVES];
+  for (size_t i = 0, j = 0; i < disk_index; i++) {
+    struct DiskInfo* di = &ii.dis[i];
+
+    if (has_geometry(di)) {
+      char* filename = image_filenames[j++];
 
       if (filename != NULL) {
         FILE *file = fopen(filename, "r");
@@ -214,10 +230,12 @@ int main(int argc, char **argv)
               error("Error: can't write output\r\n");
             }
           }
+
+          fclose(file);
         }
         else
         {
-          error("Error: can't open image file %s\r\n", filename);
+          error("Error: can't read image file %s\r\n", filename);
         }
       }
       else {

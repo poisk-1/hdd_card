@@ -1,8 +1,10 @@
 #include "int13h_service.h"
 
 #include <inttypes.h>
+#include <stdint.h>
 #include <string.h>
 
+#include "image_info.h"
 #include "log.h"
 #include "multiblock_transfer.h"
 #include "sd.h"
@@ -87,21 +89,17 @@ struct Int13hCtrl {
     union Req req;
 };
 
-static bool is_hard_drive(uint8_t drive_number) {
-    return drive_number & 0x80;
-}
+static const struct DiskInfo* find_disk_info(const struct Int13hService* service, uint8_t drive_number) {
+    const struct DiskInfo* di = NULL;
+    size_t drive_index = drive_number & HARD_DRIVE_NUMBER_MASK;
 
-static const struct DiskInfo* find_disk_info(const struct ImageInfo* ii, uint8_t drive_number) {
-    const struct DiskInfo* disk_info = NULL;
-    size_t i = drive_number & 0xf;
-
-    if (is_hard_drive(drive_number) && i < MAX_NUMBER_HARD_DRIVES) {
-        disk_info = &ii->hard_dis[i];
-    } else if (i < MAX_NUMBER_FLOPPY_DRIVES) {
-        disk_info = &ii->floppy_dis[i];
+    if (is_hard_drive(drive_number) && drive_index < MAX_NUMBER_HARD_DRIVES) {
+        di = service->current_hard_dis[drive_index];
+    } else if (drive_index < MAX_NUMBER_FLOPPY_DRIVES) {
+        di = service->current_floppy_dis[drive_index];
     }
 
-    return disk_info;
+    return di;
 }
 
 void int13_service_init(struct Int13hService *service) {
@@ -112,6 +110,7 @@ void int13_service_init(struct Int13hService *service) {
 }
 
 void log_drive_info(const struct DiskInfo* di) {
+    LOG("\tDRIVE NUMBER: 0x%x\r\n", di->drive_number);
     LOG("\tDRIVE TYPE FUN8H: 0x%x\r\n", di->drive_type_fun8h);
     LOG("\tDRIVE TYPE FUN15H: 0x%x\r\n", di->drive_type_fun15h);
 
@@ -133,21 +132,40 @@ bool int13_service_mount_media(struct Int13hService *service) {
         if (sd_start_read_blocks(0) && sd_read_next_block(buffer_get_data())) {
             struct ImageInfo *ii = (struct ImageInfo *)buffer_get_data();
             if (memcmp(ii->magic, IMAGE_MAGIC_STR, IMAGE_MAGIC_SIZE) == 0) {
-                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                    if (has_geometry(&ii->floppy_dis[i])) {
-                        LOG("MOUNTED FP%d:\r\n", i);
-                        log_drive_info(&ii->floppy_dis[i]);
-                    }
-                }
-
-                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                    if (has_geometry(&ii->hard_dis[i])) {
-                        LOG("MOUNTED HD%d:\r\n", i);
-                        log_drive_info(&ii->hard_dis[i]);
-                    }
-                }
-
                 memcpy(&service->ii, ii, sizeof(struct ImageInfo));
+
+                service->floppy_drive_count = 0;
+                service->hard_drive_count = 0;
+
+                for (uint8_t di_index = 0; di_index < MAX_NUMBER_DISKS; di_index++) {
+                    struct DiskInfo* di = &service->ii.dis[di_index];
+                    if (has_geometry(di)) {
+                        uint8_t drive_index = di->drive_number & HARD_DRIVE_NUMBER_MASK;
+
+                        if (is_hard_drive(di->drive_number) && drive_index < MAX_NUMBER_HARD_DRIVES) {
+                            LOG("MOUNTED HD%d#%d:\r\n", drive_index, service->hard_di_counts[drive_index]);
+                            log_drive_info(di);
+
+                            if (service->current_hard_dis[drive_index] == NULL) {
+                                service->current_hard_dis[drive_index] = di;
+                                service->hard_drive_count++;
+                            }
+
+                            service->hard_di_indexes[drive_index][service->hard_di_counts[drive_index]++] = di_index;
+                        }
+                        else if (drive_index < MAX_NUMBER_FLOPPY_DRIVES) {
+                            LOG("MOUNTED FP%d#%d:\r\n", drive_index, service->floppy_di_counts[drive_index]);
+                            log_drive_info(di);
+
+                            if (service->current_floppy_dis[drive_index] == NULL) {
+                                service->current_floppy_dis[drive_index] = di;
+                                service->floppy_drive_count++;
+                            }
+
+                            service->floppy_di_indexes[drive_index][service->floppy_di_counts[drive_index]++] = di_index;
+                        }
+                    }
+                }
             }
             else {
                 LOG("MAGIC NOT FOUND");
@@ -246,20 +264,8 @@ void int13_service_handle_media_present(struct Int13hService *service, struct Se
             break;
 
         case INT13H_SERVICE_REQUEST_SCAN:
-            ctrl->req.scan_req.number_of_floppy_drives = 0;
-            ctrl->req.scan_req.number_of_hard_drives = 0;
-
-            for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                if (has_geometry(&service->ii.floppy_dis[i])) {
-                    ctrl->req.scan_req.number_of_floppy_drives++;
-                }
-            }
-
-            for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                if (has_geometry(&service->ii.hard_dis[i])) {
-                    ctrl->req.scan_req.number_of_hard_drives++;
-                }
-            }
+            ctrl->req.scan_req.number_of_floppy_drives = service->floppy_drive_count;
+            ctrl->req.scan_req.number_of_hard_drives = service->hard_drive_count;
 
             LOG("SCAN [%d FPS, %d HDS]\r\n", ctrl->req.scan_req.number_of_floppy_drives, ctrl->req.scan_req.number_of_hard_drives);
             break;
@@ -270,7 +276,7 @@ void int13_service_handle_media_present(struct Int13hService *service, struct Se
             break;
 
         case INT13H_SERVICE_REQUEST_READ:
-            di = find_disk_info(&service->ii, ctrl->req.rwv_req.drive_number);
+            di = find_disk_info(service, ctrl->req.rwv_req.drive_number);
 
             LOG(
                     "READ [d=%d,lc=%d,h=%d,shc=%d,sct=%d] ",
@@ -326,7 +332,7 @@ void int13_service_handle_media_present(struct Int13hService *service, struct Se
 
 
         case INT13H_SERVICE_REQUEST_WRITE:
-            di = find_disk_info(&service->ii, ctrl->req.rwv_req.drive_number);
+            di = find_disk_info(service, ctrl->req.rwv_req.drive_number);
             LOG(
                     "WRITE [d=%d,lc=%d,h=%d,shc=%d,sct=%d] ",
                     ctrl->req.rwv_req.drive_number,
@@ -408,7 +414,7 @@ void int13_service_handle_media_present(struct Int13hService *service, struct Se
         case INT13H_SERVICE_REQUEST_VERIFY:
             {
                 uint32_t block_address = 0;
-                di = find_disk_info(&service->ii, ctrl->req.rwv_req.drive_number);
+                di = find_disk_info(service, ctrl->req.rwv_req.drive_number);
                 LOG(
                         "VERIFY [d=%d,lc=%d,h=%d,shc=%d,sct=%d] ",
                         ctrl->req.rwv_req.drive_number,
@@ -432,20 +438,12 @@ void int13_service_handle_media_present(struct Int13hService *service, struct Se
             ctrl->req.read_params_fun8h_req.number_of_drives = 0;
 
             if (is_hard_drive(ctrl->req.read_params_fun8h_req.drive_number)) {
-                for (size_t i = 0; i < MAX_NUMBER_HARD_DRIVES; i++) {
-                    if (has_geometry(&service->ii.hard_dis[i])) {
-                        ctrl->req.read_params_fun8h_req.number_of_drives++;
-                    }
-                }
+                ctrl->req.read_params_fun8h_req.number_of_drives = service->hard_drive_count;
             } else {
-                for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {
-                    if (has_geometry(&service->ii.floppy_dis[i])) {
-                        ctrl->req.read_params_fun8h_req.number_of_drives++;
-                    }
-                }
+                ctrl->req.read_params_fun8h_req.number_of_drives = service->floppy_drive_count;
             }
 
-            di = find_disk_info(&service->ii, ctrl->req.read_params_fun8h_req.drive_number);
+            di = find_disk_info(service, ctrl->req.read_params_fun8h_req.drive_number);
 
             LOG(
                     "READ_PARAMS_FUN8H [d=%d] ",
@@ -472,7 +470,7 @@ void int13_service_handle_media_present(struct Int13hService *service, struct Se
             break;
 
         case INT13H_SERVICE_REQUEST_READ_PARAMS_FUN15H:
-            di = find_disk_info(&service->ii, ctrl->req.read_params_fun8h_req.drive_number);
+            di = find_disk_info(service, ctrl->req.read_params_fun8h_req.drive_number);
             LOG(
                     "READ_PARAMS_FUN15H [d=%d] ",
                     ctrl->req.read_params_fun15h_req.drive_number

@@ -10,3 +10,7 @@ uint32_t size_blocks(struct DiskInfo* di)
 bool has_geometry(const struct DiskInfo* di) {
     return di->number_of_cylinders != 0;
 }
+
+bool is_hard_drive(uint8_t drive_number) {
+    return drive_number & HARD_DRIVE_NUMBER_BASE;
+}

@@ -50,6 +50,7 @@ enum DriveTypeFun15h {
  struct __attribute__ ((packed)) DiskInfo {
     bool read_only;
 
+    uint8_t drive_number;
     uint8_t drive_type_fun8h;
     uint8_t drive_type_fun15h;
 
@@ -63,15 +64,20 @@ enum DriveTypeFun15h {
 #define IMAGE_MAGIC_SIZE 4
 #define IMAGE_MAGIC_STR "cool"
 
+#define MAX_NUMBER_DISKS 32
+
 #define MAX_NUMBER_FLOPPY_DRIVES 4
 #define MAX_NUMBER_HARD_DRIVES 2
+
+#define HARD_DRIVE_NUMBER_BASE 0x80
+#define HARD_DRIVE_NUMBER_MASK 0x0f
 
 struct __attribute__ ((packed)) ImageInfo {
     char magic[IMAGE_MAGIC_SIZE];
 
-    struct DiskInfo floppy_dis[MAX_NUMBER_FLOPPY_DRIVES];
-    struct DiskInfo hard_dis[MAX_NUMBER_HARD_DRIVES];
+    struct DiskInfo dis[MAX_NUMBER_DISKS];
 };
 
 uint32_t size_blocks(struct DiskInfo* di);
 bool has_geometry(const struct DiskInfo* di);
+bool is_hard_drive(uint8_t drive_number);

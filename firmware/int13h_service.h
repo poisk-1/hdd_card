@@ -6,6 +6,17 @@
 
 struct Int13hService {
     struct ImageInfo ii;
+    struct DiskInfo *current_floppy_dis[MAX_NUMBER_FLOPPY_DRIVES];
+    struct DiskInfo *current_hard_dis[MAX_NUMBER_HARD_DRIVES];
+
+    uint8_t floppy_di_counts[MAX_NUMBER_FLOPPY_DRIVES];
+    uint8_t hard_di_counts[MAX_NUMBER_HARD_DRIVES];
+
+    uint8_t floppy_di_indexes[MAX_NUMBER_FLOPPY_DRIVES][MAX_NUMBER_DISKS];
+    uint8_t hard_di_indexes[MAX_NUMBER_HARD_DRIVES][MAX_NUMBER_DISKS];
+
+    uint8_t floppy_drive_count;
+    uint8_t hard_drive_count;
     
     uint32_t current_read_block_address;
     struct MultiblockTransfer read_mbt;

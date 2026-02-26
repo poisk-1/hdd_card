@@ -1,6 +1,17 @@
-./pack --read-only dos311.img --hard-256c | sudo dd of=/dev/sdd
+./pack \
+    --read-only --floppy0-image dos311.img \
+    --hard0-256c \
+    | sudo dd of=/dev/sdd
 
-./pack --read-only floppy0.img hard0.img | sudo dd of=/dev/sdd
+./pack \
+    --read-only --floppy0-image floppy0.img \
+    --read-only --floppy1-image win30/DISK01.IMG \
+    --read-only --floppy1-image win30/DISK02.IMG \
+    --read-only --floppy1-image win30/DISK03.IMG \
+    --read-only --floppy1-image win30/DISK04.IMG \
+    --read-only --floppy1-image win30/DISK05.IMG \
+    --hard0-image hard0.img \
+    | sudo dd of=/dev/sdd
 
 sudo dd if=/dev/sdd | ./unpack
 
