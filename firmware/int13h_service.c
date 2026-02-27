@@ -9,6 +9,7 @@
 #include "multiblock_transfer.h"
 #include "sd.h"
 #include "buffer.h"
+#include "uart.h"
 
 
 enum Int13hServiceRequest {
@@ -197,6 +198,42 @@ void int13_service_unmount_media(struct Int13hService *service) {
 void int13_service_wait_media_present(struct Int13hService *service) {
     mb_transfer_stop_if_expired(&service->read_mbt);
     mb_transfer_stop_if_expired(&service->write_mbt);
+
+    uint8_t command = 0;
+    if (try_uart_read(&command)) {
+        if (command >= 'a' && command < 'a' + MAX_NUMBER_FLOPPY_DRIVES) {
+            uint8_t drive_index = command - 'a';
+
+            for (uint8_t i = 0; i < service->floppy_di_counts[drive_index]; i++) {
+                uint8_t di_index = service->floppy_di_indexes[drive_index][i];
+                struct DiskInfo* di = &service->ii.dis[di_index];
+
+                if (di == service->current_floppy_dis[drive_index]) {
+                    uint8_t j = (i + 1) % service->floppy_di_counts[drive_index];
+                    LOG("FLOPPY DRIVE %d DISK CHANGE FROM %d TO %d\r\n", drive_index, i, j);
+
+                    service->current_floppy_dis[drive_index] = &service->ii.dis[service->floppy_di_indexes[drive_index][j]];
+                    service->media_changed[drive_index] = true;
+                    break;
+                }
+            }
+        } else if (command >= '0' && command < '0' + MAX_NUMBER_HARD_DRIVES) {
+            uint8_t drive_index = command - '0';
+
+            for (uint8_t i = 0; i < service->hard_di_counts[drive_index]; i++) {
+                uint8_t di_index = service->hard_di_indexes[drive_index][i];
+                struct DiskInfo* di = &service->ii.dis[di_index];
+
+                if (di == service->current_hard_dis[drive_index]) {
+                    uint8_t j = (i + 1) % service->hard_di_counts[drive_index];
+                    LOG("HARD DRIVE %d DISK CHANGE FROM %d TO %d\r\n", drive_index, i, j);
+
+                    service->current_hard_dis[drive_index] = &service->ii.dis[service->hard_di_indexes[drive_index][j]];
+                    break;
+                }
+            }
+        }
+    }
 }
 
 #define HIGH_CYLINDER_BITS 2

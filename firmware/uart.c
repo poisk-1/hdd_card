@@ -53,6 +53,17 @@ uint8_t uart_read(void)
     return U1RXB;
 }
 
+bool try_uart_read(uint8_t *data)
+{
+    if (PIR4bits.U1RXIF)
+    {
+        *data = U1RXB;
+        return true;
+    }
+
+    return false;
+}
+
 void uart_write(uint8_t data)
 {
     while(0 == PIR4bits.U1TXIF)
