@@ -294,16 +294,17 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
             break;
     }
 
-    // The device requires a minimum synchronization period of 8
-    // clock pulses following the completion of a response before
-    // it can accept a subsequent command.
-
-    (void) spi_exchange_byte(0xFF);    
-
     if (command_entry->extra_data_expected == false)
     {
         spi_chip_deselect();
     }
+
+    // The device requires a minimum synchronization period of 8
+    // clock pulses following the completion of a response before
+    // it can accept a subsequent command. Chip Select (CS) must  
+    // be de-asserted.
+
+    (void) spi_exchange_byte(0xFF);    
 }
 
 // In SPI Slow Mode, a 400kHz clock provides 400 cycles per millisecond.

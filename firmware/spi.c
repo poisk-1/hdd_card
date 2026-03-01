@@ -57,7 +57,8 @@ uint8_t spi_exchange_byte(uint8_t data)
     SPI1TCNTL = 1;
     SPI1TXB = data;
     while(!PIR3bits.SPI1RXIF);
-    return SPI1RXB;
+    data = SPI1RXB; // This avoids unused return optimization removing SPI1RXB read
+    return data;
 }
 
 void spi_read_block(void *buffer, size_t size)
