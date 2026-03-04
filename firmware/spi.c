@@ -4,7 +4,6 @@
 #include <xc.h>
 
 #include "assert.h"
-#include "log.h"
 
 void spi_init(void)
 {
@@ -22,7 +21,7 @@ void spi_init(void)
     SPI1CON1bits.CKE = 0; // Clock Edge Select: Output data changes on transition from Idle to Active clock state
     SPI1CON1bits.SMP = 0; // SPI Input Sample Phase Control: SDI input is sampled in the middle of data output time
 
-    // No Transmission Mode
+    // Transfer Off Mode
     SPI1CON2bits.RXR = 0;
     SPI1CON2bits.TXR = 0;
 
@@ -88,38 +87,46 @@ uint8_t spi_read_byte(void)
 
 void spi_read_block(void *buffer, size_t size)
 {
+    // Receive Only Mode
     SPI1CON2bits.RXR = 1;
-    SPI1CON2bits.TXR = 1;
 
     ASSERT(SPI1TCNT == 0);
+
     SPI1TCNTH = (uint8_t)(size >> 8);
     SPI1TCNTL = (uint8_t)(size);
+
+    // Add padding to TX FIFO to transmit while receiving
+    SPI1TXB = 0xFF;
 
     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
 
     uint8_t *ptr = buffer;
     for (size_t i = 0; i < size; i++, ptr++) {
-        while(!PIR3bits.SPI1TXIF);
-        SPI1TXB = 0xFF;
 
-        ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-
+        // Wait for data in RX FIFO
         while(!PIR3bits.SPI1RXIF);
+
         *ptr = SPI1RXB;
 
         ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
     }
 
+    ASSERT(SPI1TCNT == 0);
+
+    // Clear padding from TX FIFO
+    SPI1STATUSbits.CLRBF = 1;
+
+    // Transfer Off Mode
     SPI1CON2bits.RXR = 0;
-    SPI1CON2bits.TXR = 0;
 }
 
 void spi_write_block(void *buffer, size_t size)
 {
-    SPI1CON2bits.RXR = 1;
+    // Transmit Only Mode
     SPI1CON2bits.TXR = 1;
 
     ASSERT(SPI1TCNT == 0);
+
     SPI1TCNTH = (uint8_t)(size >> 8);
     SPI1TCNTL = (uint8_t)(size);
 
@@ -128,61 +135,21 @@ void spi_write_block(void *buffer, size_t size)
     uint8_t *ptr = buffer;
     uint8_t dummy;
     for (size_t i = 0; i < size; i++, ptr++) {
+
+        // Wait for space in TX FIFO
         while(!PIR3bits.SPI1TXIF);
+
         SPI1TXB = *ptr;
-
-        ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-
-        while(!PIR3bits.SPI1RXIF);
-        dummy = SPI1RXB;
 
         ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
     }
 
-    SPI1CON2bits.RXR = 0;
+    // Flush TX FIFO
+    while (!SPI1STATUSbits.TXBE);
+
+    ASSERT(SPI1TCNT == 0);
+
+    // Transfer Off Mode
     SPI1CON2bits.TXR = 0;
 }
 
-// void spi_read_block(void *buffer, size_t size)
-// {
-//     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-
-//     SPI1CON2bits.RXR = 1;
-
-//     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-//     SPI1STATUSbits.CLRBF = 1;
-//     SPI1TXB = 0xff;
-//     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-
-//     SPI1TCNT = size;
-
-//     uint8_t *ptr = buffer;
-//     for (size_t i = 0; i < size; i++, ptr++) {
-//         while(!PIR3bits.SPI1RXIF);
-//         *ptr = SPI1RXB;
-
-//         ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-//     }
-
-//     SPI1STATUSbits.CLRBF = 1;
-
-//     SPI1CON2bits.RXR = 0;
-// }
-
-// void spi_write_block(void *buffer, size_t size)
-// {
-//     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-
-//     SPI1CON2bits.TXR = 1; 
-
-//     uint8_t *ptr = buffer;
-//     uint8_t dummy;
-//     for (size_t i = 0; i < size; i++, ptr++) {
-//         while(!PIR3bits.SPI1TXIF);
-//         SPI1TXB = *ptr;
-
-//         ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
-//     }
-
-//     SPI1CON2bits.TXR = 0;
-// }
