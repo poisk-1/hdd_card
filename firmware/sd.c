@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <string.h>
 
+#include "delay.h"
 #include "spi.h"
 
 #define SD_COMMAND_CODE_BIT_MASK (0b00111111)
@@ -214,24 +215,28 @@ union SDResponse
     union SDResponse3_7  response_3_7;
 };
 
+static void reorder_bytes(uint8_t* dst, uint8_t* src) {
+    dst[0] = src[3];
+    dst[1] = src[2];
+    dst[2] = src[1];
+    dst[3] = src[0];
+}
+
 static void send_command(uint8_t command, uint32_t param, union SDResponse *response) {
     uint16_t timeout;
     uint32_t long_timeout;
+    uint8_t uint32_buffer[4];
 
     spi_chip_select();
 
     const struct SDCommandTableEntry* command_entry = &sd_command_table[command];
 
-    (void) spi_exchange_byte((command_entry->code & SD_COMMAND_CODE_BIT_MASK) | SD_COMMAND_TRANSMIT_BIT_MASK);
+    spi_write_byte((command_entry->code & SD_COMMAND_CODE_BIT_MASK) | SD_COMMAND_TRANSMIT_BIT_MASK);
+    
+    reorder_bytes(uint32_buffer, (uint8_t *)&param);
+    spi_write_block(uint32_buffer, 4);
 
-    uint8_t *param_bytes = (uint8_t *) & param;
-
-    (void) spi_exchange_byte(param_bytes[3]);
-    (void) spi_exchange_byte(param_bytes[2]);
-    (void) spi_exchange_byte(param_bytes[1]);
-    (void) spi_exchange_byte(param_bytes[0]);
-
-    (void) spi_exchange_byte(command_entry->crc);
+    spi_write_byte(command_entry->crc);
 
     // Special case for STOP_TRANSMISSION: Ignore the first byte
     // post-command. It is frequently 'bogus' residual data and
@@ -239,7 +244,7 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
 
     if (command == SD_COMMAND_STOP_TRANSMISSION)
     {
-        (void) spi_exchange_byte(0xFF); //Perform dummy read to fetch the residual non R1 byte
+        spi_write_byte(0xFF); //Perform dummy read to fetch the residual non R1 byte
     } 
 
     // NCR delay to wait for media response. The initial byte of
@@ -249,7 +254,7 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
     timeout = SD_NCR_TIMEOUT;
     do
     {
-        response->response_1._uint8 = spi_exchange_byte(0xFF);
+        response->response_1._uint8 = spi_read_byte();
         timeout--;
     } while((response->response_1._uint8 == SD_TOKEN_FLOATING_BUS) && (timeout != 0));
 
@@ -259,7 +264,7 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
 
         case SD_RESPONSE_TYPE_R2:
             response->response_2._uint8[1] = response->response_1._uint8;
-            response->response_2._uint8[0] = spi_exchange_byte(0xFF);
+            response->response_2._uint8[0] = spi_read_byte();
             break;
 
         case SD_RESPONSE_TYPE_R1B:
@@ -272,7 +277,7 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
             long_timeout = SD_WRITE_TIMEOUT;
             do
             {
-                response->response_1._uint8 = spi_exchange_byte(0xFF);
+                response->response_1._uint8 = spi_read_byte();
                 long_timeout--;
             } while((response->response_1._uint8 == 0x00) && (long_timeout != 0));
 
@@ -286,11 +291,10 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
             // order. Since the PIC18 uses little-endian storage in RAM, ensure the
             // bytes are reordered correctly when writing to the return_val to maintain
             // numerical integrity.
+            
+            spi_read_block(uint32_buffer, 4);
+            reorder_bytes(response->response_3_7.bytes.argument._uint8, uint32_buffer);
 
-            response->response_3_7.bytes.argument._uint8[3] = spi_exchange_byte(0xFF);
-            response->response_3_7.bytes.argument._uint8[2] = spi_exchange_byte(0xFF);
-            response->response_3_7.bytes.argument._uint8[1] = spi_exchange_byte(0xFF);
-            response->response_3_7.bytes.argument._uint8[0] = spi_exchange_byte(0xFF);
             break;
     }
 
@@ -304,30 +308,13 @@ static void send_command(uint8_t command, uint32_t param, union SDResponse *resp
     // it can accept a subsequent command. Chip Select (CS) must  
     // be de-asserted.
 
-    (void) spi_exchange_byte(0xFF);    
+    spi_write_byte(0xFF);    
 }
-
-// In SPI Slow Mode, a 400kHz clock provides 400 cycles per millisecond.
-// Since each byte consists of 8 clock pulses, transmitting 50 dummy bytes
-// ensures a minimum delay of 1ms.
-
-#define SD_SLOW_CLOCK_DELAY_1MS_MIN 50
 
 #define SD_SPI_COMMAND_WAIT_MS 1
 #define SD_SPI_STARTUP_DELAY_MS 30
 
 #define SD_MEDIA_BLOCK_SIZE 512
-
-static void delay_ms(uint8_t ms) {
-    uint16_t timeout = SD_SLOW_CLOCK_DELAY_1MS_MIN * ms;
-
-    spi_chip_deselect();
-
-    while(timeout--)
-    {
-        (void) spi_exchange_byte(0xFF);
-    }
-}
 
 void sd_media_init(struct SDMediaInfo* media_info) {
     uint16_t timeout;
@@ -348,7 +335,7 @@ void sd_media_init(struct SDMediaInfo* media_info) {
     // to account for potential contact bounce or incomplete mechanical
     // insertion during the power-up phase.
 
-    delay_ms(SD_SPI_STARTUP_DELAY_MS);
+    __delay_ms(SD_SPI_STARTUP_DELAY_MS);
 
     // Issue the SD_COMMAND_GO_IDLE_STATE while Chip Select (CS) is de-asserted.
     // This sequence triggers a software reset of the media and transitions the
@@ -370,7 +357,7 @@ void sd_media_init(struct SDMediaInfo* media_info) {
         // command may have been prematurely terminated, leaving the media card
         // without the trailing clock cycles required to finalize the internal transfer.
 
-        (void) spi_exchange_byte(0xFF); 
+        spi_write_byte(0xFF); 
         spi_chip_select();
         timeout--;
 
@@ -394,7 +381,7 @@ void sd_media_init(struct SDMediaInfo* media_info) {
         // command may have been prematurely terminated, leaving the media card
         // without the trailing clock cycles required to finalize the internal transfer.
 
-        (void) spi_exchange_byte(0xFF);
+        spi_write_byte(0xFF);
         spi_chip_select();
 
         send_command(SD_COMMAND_STOP_TRANSMISSION, 0x0, &response);
@@ -504,7 +491,7 @@ void sd_media_init(struct SDMediaInfo* media_info) {
         // which supports Standard Capacity only. Ensure a brief synchronization delay is observed
         // before issuing the next command to satisfy the device's timing requirements.
 
-        delay_ms(SD_SPI_COMMAND_WAIT_MS);
+        __delay_ms(SD_SPI_COMMAND_WAIT_MS);
 
         spi_chip_select();
 
@@ -557,7 +544,7 @@ static void start_transaction() {
 
 static void end_transaction() {
     spi_chip_deselect();
-    (void) spi_exchange_byte(0xFF);
+    spi_write_byte(0xFF);
 
     spi_disable();
 }
@@ -582,7 +569,7 @@ static uint8_t wait_for_token() {
     uint32_t long_timeout = SD_NAC_TIMEOUT;
     uint8_t response;
     do {
-        response = spi_exchange_byte(0xFF);
+        response = spi_read_byte();
         long_timeout--;
     } while ((response == SD_TOKEN_FLOATING_BUS) && (long_timeout != 0));
     return response;
@@ -593,8 +580,8 @@ bool sd_read_next_block(void *buffer) {
         spi_read_block(buffer, SD_MEDIA_BLOCK_SIZE);
 
         // CRC
-        spi_exchange_byte(0xFF);
-        spi_exchange_byte(0xFF);
+        spi_write_byte(0xFF);
+        spi_write_byte(0xFF);
 
         return true;
     }
@@ -606,23 +593,23 @@ static void wait_busy() {
     uint32_t long_timeout = SD_WRITE_TIMEOUT;
     uint8_t response;
     do {
-        response = spi_exchange_byte(0xFF);
+        response = spi_read_byte();
         long_timeout--;
     } while ((response == 0x00) && (long_timeout != 0));
 }
 
 bool sd_write_next_block(void *buffer) {
-    spi_exchange_byte(SD_TOKEN_START_MULTI_BLOCK);
+    spi_write_byte(SD_TOKEN_START_MULTI_BLOCK);
 
     spi_write_block(buffer, SD_MEDIA_BLOCK_SIZE);
 
     // CRC
-    spi_exchange_byte(0xFF);
-    spi_exchange_byte(0xFF);
+    spi_write_byte(0xFF);
+    spi_write_byte(0xFF);
 
-    uint8_t response = spi_exchange_byte(0xFF);
+    uint8_t response = spi_read_byte();
 
-    spi_exchange_byte(0xFF);
+    spi_write_byte(0xFF);
 
     wait_busy();
 
@@ -638,9 +625,9 @@ void sd_stop_read_blocks(void) {
 }
 
 void sd_stop_write_blocks(void) {
-    spi_exchange_byte(SD_TOKEN_STOP_TRANSMISSION);
+    spi_write_byte(SD_TOKEN_STOP_TRANSMISSION);
 
-    spi_exchange_byte(0xFF);
+    spi_write_byte(0xFF);
 
     wait_busy();
 

@@ -173,6 +173,9 @@ bool int13_service_mount_media(struct Int13hService *service) {
                 return false;
             }
         }
+        else {
+            LOG("ERROR READING IMAGE INFO");
+        }
         sd_stop_read_blocks();
 
         for (size_t i = 0; i < MAX_NUMBER_FLOPPY_DRIVES; i++) {

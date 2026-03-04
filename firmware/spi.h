@@ -13,6 +13,7 @@ void spi_init(void);
 void spi_enable_fast(void);
 void spi_enable_slow(void);
 void spi_disable(void);
-uint8_t spi_exchange_byte(uint8_t data);
 void spi_read_block(void *buffer, size_t size);
+uint8_t spi_read_byte(void);
 void spi_write_block(void *buffer, size_t size);
+void spi_write_byte(uint8_t data);
