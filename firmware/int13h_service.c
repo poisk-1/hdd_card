@@ -135,6 +135,15 @@ bool int13_service_mount_media(struct Int13hService *service) {
             if (memcmp(ii->magic, IMAGE_MAGIC_STR, IMAGE_MAGIC_SIZE) == 0) {
                 memcpy(&service->ii, ii, sizeof(struct ImageInfo));
 
+                memset(service->current_floppy_dis, 0, sizeof(struct DiskInfo *) * MAX_NUMBER_FLOPPY_DRIVES);
+                memset(service->current_hard_dis, 0, sizeof(struct DiskInfo *) * MAX_NUMBER_HARD_DRIVES);
+
+                memset(service->floppy_di_counts, 0, sizeof(uint8_t) * MAX_NUMBER_FLOPPY_DRIVES);
+                memset(service->hard_di_counts, 0, sizeof(uint8_t) * MAX_NUMBER_HARD_DRIVES);
+
+                memset(service->floppy_di_indexes, 0, sizeof(uint8_t) * MAX_NUMBER_FLOPPY_DRIVES * MAX_NUMBER_DISKS);
+                memset(service->hard_di_indexes, 0, sizeof(uint8_t) * MAX_NUMBER_HARD_DRIVES * MAX_NUMBER_DISKS);
+
                 service->floppy_drive_count = 0;
                 service->hard_drive_count = 0;
 
