@@ -32,7 +32,7 @@ void spi_init(void)
     SLRCONBbits.SLRB2 = 0; // slew at maximum rate
 
     // SDCARD_CS -> RB3
-    LATBbits.LATB3 = 0;
+    SPI_CS = 0;
     TRISBbits.TRISB3 = 0;
     ANSELBbits.ANSELB3 = 0;
 

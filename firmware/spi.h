@@ -4,7 +4,7 @@
 #include <inttypes.h>
 #include <stddef.h>
 
-#define SPI_CS LATCbits.LATC3
+#define SPI_CS LATBbits.LATB3
 
 #define spi_chip_select() do { SPI_CS = 0; } while(0)
 #define spi_chip_deselect() do { SPI_CS = 1; } while(0);
