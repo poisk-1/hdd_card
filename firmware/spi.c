@@ -7,34 +7,34 @@
 
 void spi_init(void)
 {
-    // SDCARD_SCK -> RC0
-    LATCbits.LATC0 = 0;
-    TRISCbits.TRISC0 = 0;
-    ANSELCbits.ANSELC0 = 0;
-    RC0PPS = 0x31;
+    // SDCARD_SCK -> RB0
+    LATBbits.LATB0 = 0;
+    TRISBbits.TRISB0 = 0;
+    ANSELBbits.ANSELB0 = 0;
+    RB0PPS = 0x31;
     SPI1SCKPPSbits.PIN = 0;
-    SPI1SCKPPSbits.PORT = 2; // C
-    SLRCONCbits.SLRC0 = 0; // slew at maximum rate
+    SPI1SCKPPSbits.PORT = 1; // B
+    SLRCONBbits.SLRB0 = 0; // slew at maximum rate
 
-    // SDCARD_SDI -> RC1
-    LATCbits.LATC1 = 0;
-    TRISCbits.TRISC1 = 1;
-    ANSELCbits.ANSELC1 = 0;
+    // SDCARD_SDI -> RB1
+    LATBbits.LATB1 = 0;
+    TRISBbits.TRISB1 = 1;
+    ANSELBbits.ANSELB1 = 0;
     SPI1SDIPPSbits.PIN = 1;
-    SPI1SDIPPSbits.PORT = 2; // C
-    SLRCONCbits.SLRC1 = 0; // slew at maximum rate
+    SPI1SDIPPSbits.PORT = 1; // B
+    SLRCONBbits.SLRB1 = 0; // slew at maximum rate
 
-    // SDCARD_SDO -> RC2
-    LATCbits.LATC2 = 0;
-    TRISCbits.TRISC2 = 0;
-    ANSELCbits.ANSELC2 = 1;
-    RC2PPS = 0x32;
-    SLRCONCbits.SLRC2 = 0; // slew at maximum rate
+    // SDCARD_SDO -> RB2
+    LATBbits.LATB2 = 0;
+    TRISBbits.TRISB2 = 0;
+    ANSELBbits.ANSELB2 = 1;
+    RB2PPS = 0x32;
+    SLRCONBbits.SLRB2 = 0; // slew at maximum rate
 
-    // SDCARD_CS -> RC3
-    LATCbits.LATC3 = 0;
-    TRISCbits.TRISC3 = 0;
-    ANSELCbits.ANSELC3 = 0;
+    // SDCARD_CS -> RB3
+    LATBbits.LATB3 = 0;
+    TRISBbits.TRISB3 = 0;
+    ANSELBbits.ANSELB3 = 0;
 
     // SDCARD_CD -> RC5
     LATCbits.LATC5 = 0;
@@ -68,8 +68,6 @@ void spi_init(void)
     // Reset errors
     SPI1STATUSbits.RXRE = 0;
     SPI1STATUSbits.TXWE = 0;
-
-    TRISCbits.TRISC0 = 0; // SCK
 }
 
 void spi_enable_fast(void)

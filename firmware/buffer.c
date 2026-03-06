@@ -41,25 +41,25 @@ void buffer_init(void) {
     TRISD = 0xFF;
     ANSELD = 0x00;
 
-    // SEL0 -> RB0
-    LATBbits.LATB0 = 0;
-    TRISBbits.TRISB0 = 1;
-    ANSELBbits.ANSELB0 = 0;
+    // SEL0 -> RC0
+    LATCbits.LATC0 = 0;
+    TRISCbits.TRISC0 = 1;
+    ANSELCbits.ANSELC0 = 0;
 
-    // SEL1 -> RB1
-    LATBbits.LATB1 = 0;
-    TRISBbits.TRISB1 = 1;
-    ANSELBbits.ANSELB1 = 0;
+    // SEL1 -> RC1
+    LATCbits.LATC1 = 0;
+    TRISCbits.TRISC1 = 1;
+    ANSELCbits.ANSELC1 = 0;
 
-    // SEL2 -> RB2
-    LATBbits.LATB2 = 0;
-    TRISBbits.TRISB2 = 1;
-    ANSELBbits.ANSELB2 = 0;
+    // SEL2 -> RC2
+    LATCbits.LATC2 = 0;
+    TRISCbits.TRISC2 = 1;
+    ANSELCbits.ANSELC2 = 0;
 
-    // SEL3 -> RB3
-    LATBbits.LATB3 = 0;
-    TRISBbits.TRISB3 = 1;
-    ANSELBbits.ANSELB3 = 0;
+    // SEL3 -> RC3
+    LATCbits.LATC3 = 0;
+    TRISCbits.TRISC3 = 1;
+    ANSELCbits.ANSELC3 = 0;
 
     // SEL4 -> RC4
     LATCbits.LATC4 = 0;
@@ -78,7 +78,7 @@ void *buffer_get_ctrl(void) { return &buffer[0]; }
 void *buffer_get_data(void) { return &buffer[CTRL_BUFFER_SIZE]; }
 
 #define ACK_IO LATEbits.LATE1
-#define ADDRESS ((((PORTB & 0xf) | (PORTC & 0x10)) << 8) | PORTD)
+#define ADDRESS (((PORTC & 0x1f) << 8) | PORTD)
 
 void __interrupt(irq(INT0)) handle_read(void) {
     PIR1bits.INT0IF = 0;
