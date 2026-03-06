@@ -16,4 +16,5 @@ struct ServiceCtrlBase {
     uint8_t request;
 };
 
+void service_init(void);
 void service_wait_or_handle_ctrl_request(struct ServiceCtrlBase *ctrl, void(*wait)(void), void(*handle)(struct ServiceCtrlBase *));

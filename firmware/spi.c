@@ -7,6 +7,40 @@
 
 void spi_init(void)
 {
+    // SDCARD_SCK -> RC0
+    LATCbits.LATC0 = 0;
+    TRISCbits.TRISC0 = 0;
+    ANSELCbits.ANSELC0 = 0;
+    RC0PPS = 0x31;
+    SPI1SCKPPSbits.PIN = 0;
+    SPI1SCKPPSbits.PORT = 2; // C
+    SLRCONCbits.SLRC0 = 0; // slew at maximum rate
+
+    // SDCARD_SDI -> RC1
+    LATCbits.LATC1 = 0;
+    TRISCbits.TRISC1 = 1;
+    ANSELCbits.ANSELC1 = 0;
+    SPI1SDIPPSbits.PIN = 1;
+    SPI1SDIPPSbits.PORT = 2; // C
+    SLRCONCbits.SLRC1 = 0; // slew at maximum rate
+
+    // SDCARD_SDO -> RC2
+    LATCbits.LATC2 = 0;
+    TRISCbits.TRISC2 = 0;
+    ANSELCbits.ANSELC2 = 1;
+    RC2PPS = 0x32;
+    SLRCONCbits.SLRC2 = 0; // slew at maximum rate
+
+    // SDCARD_CS -> RC3
+    LATCbits.LATC3 = 0;
+    TRISCbits.TRISC3 = 0;
+    ANSELCbits.ANSELC3 = 0;
+
+    // SDCARD_CD -> RC5
+    LATCbits.LATC5 = 0;
+    TRISCbits.TRISC5 = 1;
+    ANSELCbits.ANSELC5 = 0;
+
     SPI1CON0bits.EN = 0; // SPI Enable: SPI is disabled
 
     SPI1CON0bits.BMODE = 0; // Bit-Length Mode Select: SPIxTWIDTH setting applies only to the last byte exchanged; total bits sent is SPIxTWIDTH + (SPIxTCNT*8)
@@ -30,16 +64,6 @@ void spi_init(void)
     SPI1TWIDTHbits.TWIDTH = 0; // Bits 2-0 of the transfer bit count
 
     SPI1CLK = 0x00; // SPI Clock Source Selection: FOSC (System Clock)
-
-    RC0PPS = 0x31;   //RC0->SPI1:SCK1;    
-    SPI1SCKPPS = 0x10;   //RC0->SPI1:SCK1;    
-    RC2PPS = 0x32;   //RC2->SPI1:SDO1;    
-    SPI1SDIPPS = 0x11;   //RC1->SPI1:SDI1;    
-
-    // PORT pin slews at maximum rate
-    SLRCONCbits.SLRC0 = 0; // SCK
-    SLRCONCbits.SLRC1 = 0; // SDI
-    SLRCONCbits.SLRC2 = 0; // SDO
 
     // Reset errors
     SPI1STATUSbits.RXRE = 0;

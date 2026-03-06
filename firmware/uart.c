@@ -1,10 +1,21 @@
+#include <pic18f47q83.h>
 #include <xc.h>
 
 #include "uart.h"
 
 void uart_init(void) {
-    RC6PPS = 0x20;   //RC6->UART1:TX1;    
-    U1RXPPS = 0x17;   //RC7->UART1:RX1;    
+    // UART_TX -> RC6
+    LATCbits.LATC6 = 0;
+    TRISCbits.TRISC6 = 0;
+    ANSELCbits.ANSELC6 = 1;
+    RC6PPS = 0x20;
+
+    // UART_RX -> RC7
+    LATCbits.LATC7 = 0;
+    TRISCbits.TRISC7 = 1;
+    ANSELCbits.ANSELC7 = 0;
+    U1RXPPSbits.PIN = 7;
+    U1RXPPSbits.PORT = 2; // C
 
     // P1L 0; 
     U1P1L = 0x00;
