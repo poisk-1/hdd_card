@@ -1,4 +1,4 @@
-#include <pic18f47q83.h>
+#include <language_support.h>
 #include <xc.h>
 #include <string.h>
 
@@ -6,10 +6,14 @@
 
 #define BUFFER_SIZE (CTRL_BUFFER_SIZE + DATA_BUFFER_SIZE)
 
-static uint8_t buffer[BUFFER_SIZE];
+#define BUFFER_BANK_BASE 0x12
+#define BUFFER_BANK_MASK 0x1f
+
+#define BUFFER_BASE ((uint8_t*)(BUFFER_BANK_BASE << 8))
 
 void buffer_init(void) {
-    memset(buffer, 0, BUFFER_SIZE);
+
+    memset(BUFFER_BASE, 0, BUFFER_SIZE);
 
     // IO_RE(INT0) -> RB4
     LATBbits.LATB4 = 0;
@@ -74,28 +78,47 @@ void buffer_init(void) {
     INTCON0bits.GIE = 1;
 }
 
-void *buffer_get_ctrl(void) { return &buffer[0]; }
-void *buffer_get_data(void) { return &buffer[CTRL_BUFFER_SIZE]; }
+void *buffer_get_ctrl(void) { return &BUFFER_BASE[0]; }
+void *buffer_get_data(void) { return &BUFFER_BASE[CTRL_BUFFER_SIZE]; }
 
-#define ACK_IO LATEbits.LATE1
-#define ADDRESS (((PORTC & 0x1f) << 8) | PORTD)
+extern void __interrupt(irq(INT0)) handle_read(void) {
+    asm("bcf            PIR1,0"); // INT0IF = 0
 
-void __interrupt(irq(INT0)) handle_read(void) {
-    PIR1bits.INT0IF = 0;
+    asm("clrf           TRISA");
 
-    TRISA = 0x00;
-    LATA = buffer[ADDRESS];
-    ACK_IO = 0;
-    ACK_IO = 1;
-    TRISA = 0xff;
+    asm("movf           PORTC,w");
+    asm("andlw          0x1f");
+    asm("addlw          0x12");
+    asm("movwf          fsr2h");
+
+    asm("movf           PORTD,w");
+    asm("movwf          fsr2l");
+
+    asm("movff          indf2,PORTA");
+
+    asm("bcf            LATE,1"); // ACK_IO = 0;
+    asm("bsf            LATE,1"); // ACK_IO = 1;
+
+    asm("setf           TRISA");
+
+    
 }
 
-void __interrupt(irq(INT1)) handle_write(void) {
-    PIR6bits.INT1IF = 0;
+extern void __interrupt(irq(INT1)) handle_write(void) {
+    asm("bcf            PIR6,0"); // INT1IF = 0
 
-    buffer[ADDRESS] = PORTA;
-    ACK_IO = 0;
-    ACK_IO = 1;
+    asm("movf           PORTC,w");
+    asm("andlw          0x1f");
+    asm("addlw          0x12");
+    asm("movwf          fsr2h");
+
+    asm("movf           PORTD,w");
+    asm("movwf          fsr2l");
+
+    asm("movff          PORTA,indf2");
+
+    asm("bcf            LATE,1"); // ACK_IO = 0;
+    asm("bsf            LATE,1"); // ACK_IO = 1;
 }
 
 void __interrupt(irq(default)) handle_undefined(unsigned char src) {

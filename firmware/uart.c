@@ -1,4 +1,3 @@
-#include <pic18f47q83.h>
 #include <xc.h>
 
 #include "uart.h"

@@ -43,7 +43,9 @@
                 "HI-TECH-COMP.optimization-level": "-O0",
                 "HI-TECH-COMP.define-macros": [
                     "DEBUG"
-                ]
+                ],
+                "HI-TECH-COMP.asmlist": true,
+                "HI-TECH-LINK.data-model-ram": "0-11FF"
             }
         },
         {
@@ -54,7 +56,9 @@
                 "HI-TECH-COMP.optimization-level": "-O2",
                 "HI-TECH-COMP.define-macros": [
                     "RELEASE"
-                ]
+                ],
+                "HI-TECH-COMP.asmlist": true,
+                "HI-TECH-LINK.data-model-ram": "0-11FF"
             }
         }
     ],
