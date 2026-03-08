@@ -114,22 +114,52 @@ void spi_read_block(void *buffer, size_t size)
     ASSERT(SPI1TCNT == 0);
 
     SPI1TCNTH = (uint8_t)(size >> 8);
-    SPI1TCNTL = (uint8_t)(size);
+    SPI1TCNTL = (uint8_t)(size & 0xff);
 
     // Add padding to TX FIFO to transmit while receiving
     SPI1TXB = 0xFF;
 
     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
 
-    uint8_t *ptr = buffer;
-    for (size_t i = 0; i < size; i++, ptr++) {
+    if (size <= 4) {
+        uint8_t *ptr = buffer;
+        for (size_t i = 0; i < size; i++, ptr++) {
 
-        // Wait for data in RX FIFO
-        while(!PIR3bits.SPI1RXIF);
+            // Wait for data in RX FIFO
+            while(!PIR3bits.SPI1RXIF);
 
-        *ptr = SPI1RXB;
+            *ptr = SPI1RXB;
 
-        ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
+            ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
+        }
+    }
+    else {
+        DMASELECT = 0;
+
+        DMAnCON0bits.EN = 0;
+
+        DMAnCON1bits.SSTP = 0;
+        DMAnCON1bits.SMODE = 0;
+        DMAnCON1bits.SMR = 0;
+        DMAnCON1bits.DSTP = 1;
+        DMAnCON1bits.DMODE = 1;
+
+        DMAnSSZ = 1;
+        DMAnSSA = (uint24_t)&SPI1RXB;
+        DMAnDSZ = size;
+        DMAnDSA = (uint16_t)buffer;
+
+        DMAnSIRQ = 0x18; // SPI1RX
+
+        PRLOCK = 0x55;
+        PRLOCK = 0xAA;
+        PRLOCKbits.PRLOCKED = 1;
+
+        DMAnCON0bits.AIRQEN = 0;
+        DMAnCON0bits.SIRQEN = 1;
+        DMAnCON0bits.EN = 1;
+
+        while (DMAnCON0bits.SIRQEN);
     }
 
     ASSERT(SPI1TCNT == 0);
@@ -149,20 +179,49 @@ void spi_write_block(void *buffer, size_t size)
     ASSERT(SPI1TCNT == 0);
 
     SPI1TCNTH = (uint8_t)(size >> 8);
-    SPI1TCNTL = (uint8_t)(size);
+    SPI1TCNTL = (uint8_t)(size & 0xff);
 
     ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
 
-    uint8_t *ptr = buffer;
-    uint8_t dummy;
-    for (size_t i = 0; i < size; i++, ptr++) {
+    if (size <= 4) {
+        uint8_t *ptr = buffer;
+        for (size_t i = 0; i < size; i++, ptr++) {
 
-        // Wait for space in TX FIFO
-        while(!PIR3bits.SPI1TXIF);
+            // Wait for space in TX FIFO
+            while(!PIR3bits.SPI1TXIF);
 
-        SPI1TXB = *ptr;
+            SPI1TXB = *ptr;
 
-        ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
+            ASSERT(SPI1STATUSbits.RXRE == 0 && SPI1STATUSbits.TXWE == 0);
+        }
+    }
+    else {        
+        DMASELECT = 0;
+
+        DMAnCON0bits.EN = 0;
+
+        DMAnCON1bits.SSTP = 1;
+        DMAnCON1bits.SMODE = 1;
+        DMAnCON1bits.SMR = 0;
+        DMAnCON1bits.DSTP = 0;
+        DMAnCON1bits.DMODE = 0;
+
+        DMAnSSZ = size;
+        DMAnSSA = (uint24_t)buffer;
+        DMAnDSZ = 1;
+        DMAnDSA = (uint16_t)&SPI1TXB;
+
+        DMAnSIRQ = 0x19; // SPI1TX
+
+        PRLOCK = 0x55;
+        PRLOCK = 0xAA;
+        PRLOCKbits.PRLOCKED = 1;
+
+        DMAnCON0bits.AIRQEN = 0;
+        DMAnCON0bits.SIRQEN = 1;
+        DMAnCON0bits.EN = 1;
+
+        while (DMAnCON0bits.SIRQEN);
     }
 
     // Flush TX FIFO
