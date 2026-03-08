@@ -73,7 +73,7 @@ void spi_enable_fast(void)
 {
     if(!SPI1CON0bits.EN)
     {
-        SPI1BAUD = 0x03; //  Baud Clock Prescaler Select: 64MHz / 2 * (1 + 3) = 8MHz
+        SPI1BAUD = 2; //  Baud Clock Prescaler Select: 64MHz / 2 * (1 + 2) = 10.666MHz
         SPI1CON0bits.EN = 1; // SPI Enable: SPI is enabled
     }
 }
@@ -82,7 +82,7 @@ void spi_enable_slow(void)
 {
     if(!SPI1CON0bits.EN)
     {
-        SPI1BAUD = 0x4f; //  Baud Clock Prescaler Select: 64MHz / 2 * (1 + 79) = 400KHz
+        SPI1BAUD = 79; //  Baud Clock Prescaler Select: 64MHz / 2 * (1 + 79) = 400KHz
         SPI1CON0bits.EN = 1; // SPI Enable: SPI is enabled
     }
 }
