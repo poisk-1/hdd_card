@@ -136,28 +136,28 @@ void spi_read_block(void *buffer, size_t size)
     else {
         DMASELECT = 0;
 
-        DMAnCON0bits.EN = 0;
+        DMAnCON0bits.EN = 0; // Disable DMA
 
-        DMAnCON1bits.SSTP = 0;
-        DMAnCON1bits.SMODE = 0;
-        DMAnCON1bits.SMR = 0;
-        DMAnCON1bits.DSTP = 1;
-        DMAnCON1bits.DMODE = 1;
+        DMAnCON1bits.SSTP = 0; // SIRQEN bit is not cleared when source counter reloads
+        DMAnCON1bits.SMODE = 0; // Source Pointer (DMASPTR) remains unchanged after each transfer
+        DMAnCON1bits.SMR = 0; // SFR/GPR data space is selected as the DMA source memory
+        DMAnCON1bits.DSTP = 1; // SIRQEN bit is cleared when destination counter reloads
+        DMAnCON1bits.DMODE = 1; // Destination Pointer (DMADPTR) is decremented after each transfer
 
-        DMAnSSZ = 1;
-        DMAnSSA = (uint24_t)&SPI1RXB;
-        DMAnDSZ = size;
-        DMAnDSA = (uint16_t)buffer;
+        DMAnSSZ = 1; // DMA Source Size
+        DMAnSSA = (uint24_t)&SPI1RXB; // DMA Source Start Address
+        DMAnDSZ = size; // DMA Destination Size
+        DMAnDSA = (uint16_t)buffer; // DMA Destination Start Address 
 
-        DMAnSIRQ = 0x18; // SPI1RX
+        DMAnSIRQ = 0x18; // DMA Start Interrupt Request Source Selection: SPI1RX
 
         PRLOCK = 0x55;
         PRLOCK = 0xAA;
         PRLOCKbits.PRLOCKED = 1;
 
-        DMAnCON0bits.AIRQEN = 0;
-        DMAnCON0bits.SIRQEN = 1;
-        DMAnCON0bits.EN = 1;
+        DMAnCON0bits.AIRQEN = 0; // Hardware triggers are not allowed to abort the DMA transfers
+        DMAnCON0bits.SIRQEN = 1; // Hardware triggers are allowed to start DMA transfers
+        DMAnCON0bits.EN = 1; // Enable DMA
 
         while (DMAnCON0bits.SIRQEN);
     }
@@ -198,28 +198,28 @@ void spi_write_block(void *buffer, size_t size)
     else {        
         DMASELECT = 0;
 
-        DMAnCON0bits.EN = 0;
+        DMAnCON0bits.EN = 0; // Disable DMA
 
-        DMAnCON1bits.SSTP = 1;
-        DMAnCON1bits.SMODE = 1;
-        DMAnCON1bits.SMR = 0;
-        DMAnCON1bits.DSTP = 0;
-        DMAnCON1bits.DMODE = 0;
+        DMAnCON1bits.SSTP = 1; // SIRQEN bit is cleared when source counter reloads
+        DMAnCON1bits.SMODE = 1; // Source Pointer (DMASPTR) is incremented after each transfer
+        DMAnCON1bits.SMR = 0; // SFR/GPR data space is selected as the DMA source memory
+        DMAnCON1bits.DSTP = 0; // SIRQEN bit is not cleared when destination counter reloads
+        DMAnCON1bits.DMODE = 0; // Destination Pointer (DMADPTR) remains unchanged after each transfer
 
-        DMAnSSZ = size;
-        DMAnSSA = (uint24_t)buffer;
-        DMAnDSZ = 1;
-        DMAnDSA = (uint16_t)&SPI1TXB;
+        DMAnSSZ = size; // DMA Source Size
+        DMAnSSA = (uint24_t)buffer; // DMA Source Start Address
+        DMAnDSZ = 1; // DMA Destination Size
+        DMAnDSA = (uint16_t)&SPI1TXB; // DMA Destination Start Address 
 
-        DMAnSIRQ = 0x19; // SPI1TX
+        DMAnSIRQ = 0x19; // DMA Start Interrupt Request Source Selection: SPI1TX
 
         PRLOCK = 0x55;
         PRLOCK = 0xAA;
         PRLOCKbits.PRLOCKED = 1;
 
-        DMAnCON0bits.AIRQEN = 0;
-        DMAnCON0bits.SIRQEN = 1;
-        DMAnCON0bits.EN = 1;
+        DMAnCON0bits.AIRQEN = 0; // Hardware triggers are not allowed to abort the DMA transfers
+        DMAnCON0bits.SIRQEN = 1; // Hardware triggers are allowed to start DMA transfers
+        DMAnCON0bits.EN = 1; // Enable DMA
 
         while (DMAnCON0bits.SIRQEN);
     }
