@@ -1,0 +1,76 @@
+{
+    "version": "1.8",
+    "configurations": [
+        {
+            "name": "debug",
+            "id": "debug",
+            "device": "PIC18F47Q83",
+            "imagePath": "./out/hdd_card/debug.elf",
+            "tool": "PICkit 4",
+            "packs": [
+                {
+                    "name": "PIC18F-Q_DFP",
+                    "vendor": "Microchip",
+                    "version": "1.29.481"
+                }
+            ],
+            "fileSet": "default",
+            "toolchain": "debug-XC8"
+        },
+        {
+            "name": "release",
+            "id": "release",
+            "device": "PIC18F47Q83",
+            "imagePath": "./out/hdd_card/release.elf",
+            "tool": "PICkit 4",
+            "packs": [
+                {
+                    "name": "PIC18F-Q_DFP",
+                    "vendor": "Microchip",
+                    "version": "1.29.481"
+                }
+            ],
+            "fileSet": "default",
+            "toolchain": "release-XC8"
+        }
+    ],
+    "propertyGroups": [
+        {
+            "name": "debug-XC8",
+            "type": "toolchain",
+            "provider": "microchip.toolchains:xc8@3.10",
+            "properties": {
+                "HI-TECH-COMP.optimization-level": "-O0",
+                "HI-TECH-COMP.define-macros": [
+                    "DEBUG"
+                ],
+                "HI-TECH-COMP.asmlist": true,
+                "HI-TECH-LINK.data-model-ram": "0-11FF"
+            }
+        },
+        {
+            "name": "release-XC8",
+            "type": "toolchain",
+            "provider": "microchip.toolchains:xc8@3.10",
+            "properties": {
+                "HI-TECH-COMP.optimization-level": "-O2",
+                "HI-TECH-COMP.define-macros": [
+                    "RELEASE"
+                ],
+                "HI-TECH-COMP.asmlist": true,
+                "HI-TECH-LINK.data-model-ram": "0-11FF"
+            }
+        }
+    ],
+    "fileSets": [
+        {
+            "name": "default",
+            "files": [
+                {
+                    "include": "**/*",
+                    "exclude": "**/(_build|out|cmake|.vscode)/**/*"
+                }
+            ]
+        }
+    ]
+}
